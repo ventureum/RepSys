@@ -1,10 +1,11 @@
 pragma solidity ^0.4.23;
 
 import "openzeppelin-solidity/contracts/token/ERC20/ERC20.sol";
-import "carbonvotex/contracts/CarbonVoteX.sol";
+import "carbonvotex/contracts/CarbonVoteXCore.sol";
+import "carbonvotex/contracts/ICarbonVoteXReceiver.sol";
 
 
-contract ReputationSystem {
+contract ReputationSystem is ICarbonVoteXReceiver {
     // events
     event PollRequestRegistered(
         address indexed requester,
@@ -13,7 +14,8 @@ contract ReputationSystem {
         uint maxStartTime,
         uint pseudoPrice,
         bool priceGteOne,
-        address indexed tokenAddress
+        address indexed tokenAddress,
+        bytes32[] contextTypes
     );
 
     event PollRequestModified(
@@ -23,12 +25,13 @@ contract ReputationSystem {
         uint maxStartTime,
         uint pseudoPrice,
         bool priceGteOne,
-        address indexed tokenAddress
+        address indexed tokenAddress,
+        bytes32[] contextTypes
     );
 
     event PollStarted(address indexed requester, bytes32 id, bytes32 pollId);
 
-    event VotesDelegated(
+    event Voted(
         address indexed requester,
         bytes32 id,
         address indexed member,
@@ -102,7 +105,25 @@ contract ReputationSystem {
         uint pseudoPrice;
         bool priceGteOne;
         address tokenAddress;
+        bytes32[] contextTypes;
     }
+
+    struct Poll {
+        // the assigned votes for voter
+        uint totalVotes;
+
+        // voter address => (contextType => votes)
+        // choice can be hashed value of voting options
+        // e.g. sha3("choice #1"), sha3("choice #2")
+        mapping (address => mapping(bytes32 => uint)) votesForContextType;
+
+        // choice => votes
+        mapping (bytes32 => uint) totalVotesForContextType;
+
+        // voter address => (context type => available votes));
+        mapping (address => mapping(bytes32 => uint)) availableVotesForContextType;
+    }
+
 
     // The global reputation system's id
     bytes32 globalReputationsSystemID;
@@ -114,7 +135,13 @@ contract ReputationSystem {
 
     mapping(bytes32 => PollRequest) public pollRequests;
 
-    CarbonVoteX public carbon;
+    // pollId => Poll struct
+    mapping (bytes32 => Poll) polls;
+
+    CarbonVoteXCore public carbonVoteXCore;
+
+    bytes32 public namespace;
+
 
     // modifiers
     modifier onlyNonGlobalReputationsSystemID(bytes32 _reputationsSystemID) {
@@ -128,16 +155,136 @@ contract ReputationSystem {
     /**
     * constructor for ReputationSystem
     *
-    * @param _carbonVoteX the address of a CarbonVoteX
+    # @param _namespace the namespace of this CarbonVoteX receiver
+    * @param _carbonVoteXCore the address of a carbonVoteXCore
     */
-    constructor(address _carbonVoteX) public {
-        carbon = CarbonVoteX(_carbonVoteX);
+    constructor(bytes32 _namespace, address _carbonVoteXCore) public {
+        namespace = _namespace;
+        carbonVoteXCore = CarbonVoteXCore(_carbonVoteXCore);
         globalReputationsSystemID = keccak256(address(this));
     }
 
     /**
+     * Gets the amount of gas remaining for voter
+     *
+     * @param pollId UUID (hash value) of a poll
+     * @param voter address of a voter
+     */
+    function getGasSent(bytes32 pollId, address voter) external view returns (uint) {
+        return carbonVoteXCore.getGasSent(namespace, pollId, voter);
+    }
+
+    /**
+    * Gets votes of context type available for a voter.
+    *
+    * @param pollId UUID (hash value) of a poll
+    * @param voter address of a voter
+    * @param contextType contextType the context type the voter voted for
+    */
+    function readAvailableVotesForContextType(bytes32 pollId, address voter, bytes32 contextType)
+        external
+        view
+        returns (uint)
+    {
+        require(pollExist(pollId));
+        return polls[pollId].availableVotesForContextType[voter][contextType];
+    }
+
+    /**
+    * Set votes available to voter.
+    * Voters have the same number of votes for each reputation context.
+    * It only can be called by master address of carbonVoteXCore
+    *
+    * @param pollId UUID (hash value) of a poll
+    * @param voter address of a voter
+    * @param votes number of votes to write
+    */
+    function writeAvailableVotes(bytes32 pollId, address voter, uint votes) external {
+        require (msg.sender == address(carbonVoteXCore));
+
+        polls[pollId].totalVotes = votes;
+        bytes32[] storage contextTypes = pollRequests[pollId].contextTypes;
+        for (uint i = 0; i < contextTypes.length; i++){
+            polls[pollId].availableVotesForContextType[voter][contextTypes[i]] = votes;
+        }
+    }
+
+    /**
+    * Returns whether a voter has already obtained votes.
+    *
+    * @param pollId UUID (hash value) of a poll
+    * @param voter address of a voter
+    */
+    function voteObtained(bytes32 pollId, address voter) external view returns (bool) {
+        return carbonVoteXCore.voteObtained(namespace, pollId, voter);
+    }
+
+    /**
+    * Returns the numbers of effective votes and total pending votes for members
+    *
+    * @param id the id of the reputation system (either global or non-global)
+    * @param member the address of a member
+    * @param contextType the context type of the reputation vector
+    */
+    function getVotesForMember(bytes32 id, address member, bytes32 contextType)
+        external
+        view
+        returns (uint, uint)
+    {
+        uint votes = reputations[id].repVec[member][contextType].votes;
+        uint totalPendingVotes = reputations[id].repVec[member][contextType].totalPendingVotes;
+        return (votes, totalPendingVotes);
+    }
+
+    /**
+    * Returns the voting result for context type.
+    * It is typically called by other contracts
+    *
+    * @param pollId the id of the poll to request, generated using
+    *     keccak256(projectNameHash, milestoneNameHash)
+    * @param contextType the context type the voter voted for
+    */
+    function getVotingResultForContextType(
+        bytes32 pollId,
+        bytes32 contextType
+    )
+        external
+        view
+        returns (uint)
+    {
+        //Check if poll exists
+        require(pollExist(pollId));
+
+        return polls[pollId].totalVotesForContextType[contextType];
+    }
+
+
+    /**
+    * Returns the voting result for context type by a voter.
+    * It is typically called by other contracts
+    *
+    * @param pollId the id of the poll to request, generated using
+    *     keccak256(projectNameHash, milestoneNameHash)
+    * @param voter the address of a voter
+    * @param contextType the context type the voter voted for
+    */
+    function getVotingResultForContextTypeByVoter(
+        bytes32 pollId,
+        address voter,
+        bytes32 contextType
+    )
+        external
+        view
+        returns (uint)
+    {
+        //Check if poll exists
+        require(pollExist(pollId));
+
+        return polls[pollId].votesForContextType[voter][contextType];
+    }
+
+    /**
     * Registers a poll request for a milestone for a project
-    * Any address can then start a proxy voting with CarbonVoteX with [pollId],
     * providing the initiation time is within [minStartTime, maxStartTime]
     *
     * Only accessible to specific addresses
@@ -154,6 +301,7 @@ contract ReputationSystem {
     * @param pseudoPrice see the definition in PollRequest
     * @param priceGteOne see the definition in PollRequest
     * @param tokenAddress the token address used for votes
+    * @param contextTypes the context types used for votes
     */
     function registerPollRequest(
         bytes32 pollId,
@@ -161,7 +309,8 @@ contract ReputationSystem {
         uint maxStartTime,
         uint pseudoPrice,
         bool priceGteOne,
-        address tokenAddress
+        address tokenAddress,
+        bytes32[] contextTypes
     )
         public
     {
@@ -175,7 +324,8 @@ contract ReputationSystem {
             maxStartTime: maxStartTime,
             pseudoPrice: pseudoPrice,
             priceGteOne: priceGteOne,
-            tokenAddress: tokenAddress
+            tokenAddress: tokenAddress,
+            contextTypes: contextTypes
         });
 
         emit PollRequestRegistered(
@@ -185,7 +335,8 @@ contract ReputationSystem {
             maxStartTime,
             pseudoPrice,
             priceGteOne,
-            tokenAddress
+            tokenAddress,
+            contextTypes
         );
     }
 
@@ -207,6 +358,7 @@ contract ReputationSystem {
     * @param pseudoPrice see the definition in PollRequest
     * @param priceGteOne see the definition in PollRequest
     * @param tokenAddress the token address used for votes
+    * @param contextTypes the context types used for votes
     */
     function modifyPollRequest(
         bytes32 pollId,
@@ -214,7 +366,8 @@ contract ReputationSystem {
         uint maxStartTime,
         uint pseudoPrice,
         bool priceGteOne,
-        address tokenAddress
+        address tokenAddress,
+        bytes32[] contextTypes
     )
         public
     {
@@ -227,7 +380,8 @@ contract ReputationSystem {
             maxStartTime: maxStartTime,
             pseudoPrice: pseudoPrice,
             priceGteOne: priceGteOne,
-            tokenAddress: tokenAddress
+            tokenAddress: tokenAddress,
+            contextTypes: contextTypes
         });
 
         emit PollRequestModified(
@@ -237,7 +391,8 @@ contract ReputationSystem {
             maxStartTime,
             pseudoPrice,
             priceGteOne,
-            tokenAddress
+            tokenAddress,
+            contextTypes
         );
     }
 
@@ -251,20 +406,17 @@ contract ReputationSystem {
     */
     function startPoll(bytes32 id, bytes32 pollId) public onlyNonGlobalReputationsSystemID(id) {
         require(validatePollRequest(pollId));
-        require(
-            carbon.canCall(
-                address(this),
-                address(carbon),
-                carbon.functionSig(keccak256("register"))
-            ),
-            "should get auth for registering poll from CarbonVoteX"
-        );
 
         // 20 blocks is roughly 5 min
         // for testing only
         uint startBlock = block.number + 20;
         uint endBlock = startBlock + 20;
-        carbon.register(startBlock, endBlock, pollId, pollRequests[pollId].tokenAddress);
+        carbonVoteXCore.register(
+            namespace,
+            startBlock,
+            endBlock,
+            pollId,
+            pollRequests[pollId].tokenAddress);
 
         idToProject[id].pollNonce += 1;
         uint pollNonce = idToProject[id].pollNonce;
@@ -284,7 +436,7 @@ contract ReputationSystem {
     * @param pollId the id of the poll, from which we delegate votes
     * @param votesInWei the number of Wei to delegate
     */
-    function delegate(
+    function vote(
         bytes32 id,
         address member,
         bytes32 contextType,
@@ -294,14 +446,8 @@ contract ReputationSystem {
         public
         onlyNonGlobalReputationsSystemID(id)
     {
-        require(
-            carbon.canCall(
-                address(this),
-                address(carbon),
-                carbon.functionSig(keccak256("voteFor"))
-            ),
-            "should get auth for voteFor from CarbonVoteX"
-        );
+        // poll must exits and not yet expired.
+        require(pollExist(pollId) && !pollExpired(pollId));
 
         // convert votes in wei to votes in project's token's basic unit
         uint votes = convertVotes(
@@ -310,12 +456,23 @@ contract ReputationSystem {
             pollRequests[pollId].priceGteOne
         );
 
-        // This basically checks if the voter has enough votes
-        carbon.voteFor(pollId, msg.sender, contextType, votes);
+        // voter cannot vote more votes than it has for contextType.
+        require(
+            polls[pollId].availableVotesForContextType[msg.sender][contextType] >= votes
+        );
+
+        // deduct voter's available votes from.
+        polls[pollId].availableVotesForContextType[msg.sender][contextType] -= votes;
+
+        // place votes to voter's choice for contextType.
+        polls[pollId].votesForContextType[msg.sender][contextType] += votes;
+
+        // place votes to totalVotesByChoice;
+        polls[pollId].totalVotesForContextType[contextType] += votes;
+
 
         // record voting results, here we use votes in wei as our standard unit
         // across projects
-
 
         // update project-specific reputation
         Context storage context = reputations[id].repVec[member][contextType];
@@ -325,7 +482,7 @@ contract ReputationSystem {
         // update global reputation
         uint startBlock;
         uint endBlock;
-        (startBlock, endBlock,) = carbon.getPoll(pollId);
+        (startBlock, endBlock,) = getPoll(pollId);
 
         Context storage globalContext = reputations[globalReputationsSystemID]
             .repVec[member][contextType];
@@ -358,7 +515,7 @@ contract ReputationSystem {
                 idToProject[globalReputationsSystemID].oldestPollId;
 
 
-        emit VotesDelegated(
+        emit Voted(
             msg.sender,
             id,
             member,
@@ -367,39 +524,6 @@ contract ReputationSystem {
             votesInWei,
             idToProject[globalReputationsSystemID].pollNonce
         );
-    }
-
-    /**
-    * Returns the numbers of effective votes and total pending votes
-    *
-    * @param id the id of the reputation system (either global or non-global)
-    * @param member the address of a member
-    * @param contextType the context type of the reputation vector
-    */
-    function getVotes(bytes32 id, address member, bytes32 contextType)
-        public
-        view
-        returns (uint, uint)
-    {
-        uint votes = reputations[id].repVec[member][contextType].votes;
-        uint totalPendingVotes = reputations[id].repVec[member][contextType].totalPendingVotes;
-        return (votes, totalPendingVotes);
-    }
-
-    /**
-    * Checks if a context type of a reputation vector needs update
-    *
-    * @param id the id of the reputation system (either global or non-global)
-    * @param member the address of a member
-    * @param contextType the context type of the reputation vector
-    */
-    function requireUpdateContext(bytes32 id, address member, bytes32 contextType)
-        public
-        view
-        returns (bool)
-    {
-        Context storage context = reputations[id].repVec[member][contextType];
-        return context.totalPendingVotes != 0;
     }
 
     /**
@@ -417,8 +541,10 @@ contract ReputationSystem {
         bytes32 id,
         address member,
         bytes32 contextType,
-        bool expirationCheck)
-    public {
+        bool expirationCheck
+    )
+        public
+    {
         Context storage context = reputations[id].repVec[member][contextType];
         uint pollNonce = idToProject[id].pollNonce;
         uint lastUpdated = context.lastUpdated;
@@ -434,7 +560,7 @@ contract ReputationSystem {
         for (uint i = lastUpdated + 1; i <= pollNonce; i++) {
             bytes32 latestPollId = idToProject[id].nonceToLatestPollId[i];
             bytes32 oldestPollId = idToProject[id].nonceToOldestPollId[i];
-            if ((!expirationCheck) || (expirationCheck && carbon.pollExpired(latestPollId))) {
+            if ((!expirationCheck) || (expirationCheck && pollExpired(latestPollId))) {
                 uint pendingVotes = context.pendingVotes[oldestPollId];
                 if (pollNonce == 1) {
                     context.votes =  pendingVotes;
@@ -506,6 +632,63 @@ contract ReputationSystem {
 
         emit RepVecContextBatchUpdated(msg.sender, id, member, contextTypes);
     }
+
+    /**
+    * Checks if a context type of a reputation vector needs update
+    *
+    * @param id the id of the reputation system (either global or non-global)
+    * @param member the address of a member
+    * @param contextType the context type of the reputation vector
+    */
+    function requireUpdateContext(bytes32 id, address member, bytes32 contextType)
+        public
+        view
+        returns (bool)
+    {
+        Context storage context = reputations[id].repVec[member][contextType];
+        return context.totalPendingVotes != 0;
+    }
+
+
+    /**
+    * Checks if a poll exits
+    *
+    * @param pollId the id of the poll to start, generated using
+    *     keccak256(projectNameHash, milestoneNameHash)
+    */
+    function pollExist(bytes32 pollId) public view returns (bool) {
+        return carbonVoteXCore.pollExist(namespace, pollId);
+    }
+
+    /**
+    * Checks if a poll has expired
+    *
+    * @param pollId the id of the poll to start, generated using
+    *     keccak256(projectNameHash, milestoneNameHash)
+    */
+    function pollExpired(bytes32 pollId) public view returns (bool) {
+        // Check if poll exists
+        require(pollExist(pollId));
+
+        return carbonVoteXCore.pollExpired(namespace, pollId);
+    }
+
+    /**
+    * Returns the namespace of this CarbonVoteReceiver.
+    */
+    function getNamespace() external view returns (bytes32){
+        return namespace;
+    }
+
+    /**
+     * Gets the startBlock, endBlock, pollId and token address of the poll.
+     *
+     * @param pollId UUID (hash value) of a poll
+     */
+    function getPoll(bytes32 pollId) public view returns (uint, uint, bytes32, address) {
+        return carbonVoteXCore.getPoll(namespace, pollId);
+    }
+
 
     /**
     * Returns votes in project's token's basic unit

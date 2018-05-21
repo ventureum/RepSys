@@ -1,11 +1,3 @@
-require('dotenv').config()
-
-// // babel does not transpile js in node_modules, we need to ignore them
-// require('babel-register')({
-//   ignore: /node_modules\/(?!openzeppelin-solidity\/test\/helpers)/
-// })
-// require('babel-polyfill')
-
 var HDWalletProvider = require("truffle-hdwallet-provider");
 var mnemonic = "effort gospel broken fatigue taste mountain rule uncover radio caught metal nation";
 
@@ -16,7 +8,7 @@ module.exports = {
       port: 8545,
       network_id: "*", // Match any network id
       gas: 5000000,
-      provider: new HDWalletProvider(mnemonic, "http://localhost:8545",0, 6)
+      provider: new HDWalletProvider(mnemonic, "http://localhost:8545",0, 9)
     }
   }
 };

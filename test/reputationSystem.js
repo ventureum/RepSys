@@ -1,5 +1,5 @@
 const ReputationSystem = artifacts.require("./ReputationSystem.sol");
-const CarbonVoteX = artifacts.require("carbonvotex/contracts/CarbonVoteX.sol");
+const CarbonVoteXCore = artifacts.require("carbonvotex/contracts/CarbonVoteXCore.sol")
 const Web3 = require ('web3');
 const web3 = new Web3();
 const PSEUDO_PRICE_ONE = 1;
@@ -8,31 +8,47 @@ const MIN_START_TIME = 100;
 const MAX_START_TIME = 200;
 const CONTEXT_TYPE_ONE = "one";
 const CONTEXT_TYPE_TWO = "two";
-const TOTAL_VOTES_LIMIT = 200;
+const TOTAL_VOTES_LIMIT = 100;
+const CONTEXT_TYPES = [CONTEXT_TYPE_ONE, CONTEXT_TYPE_TWO];
+const NAMESPACE_REPUTATION_SYSTEM = "ReputationSystem";
 
 contract('ReputationSystem', accounts => {
-    const MASTER_ACCOUNT = accounts[0];
-    const VOTER_ACCOUNT_ONE = accounts[1];
-    const VOTER_ACCOUNT_TWO = accounts[2];
-    const MEMBER_ACCOUNT_ONE = accounts[3];
-    const MEMBER_ACCOUNT_TWO = accounts[4];
-    const MEMBER_ACCOUNT_THREE = accounts[5];
-    const MEMBER_ACCOUNT_FOUR = accounts[6];
-    const REGISTER_ACCOUNT = accounts[7];
-    const TOKEN_ADDRESS = accounts[8];
+    const ROOT_ACCOUNT = accounts[0];
+    const MASTER_ACCOUNT = accounts[1];
+    const VOTER_ACCOUNT_ONE = accounts[2];
+    const VOTER_ACCOUNT_TWO = accounts[3];
+    const MEMBER_ACCOUNT_ONE = accounts[4];
+    const MEMBER_ACCOUNT_TWO = accounts[5];
+    const MEMBER_ACCOUNT_THREE = accounts[6];
+    const MEMBER_ACCOUNT_FOUR = accounts[7];
+    const REGISTER_ACCOUNT = accounts[8];
+    const TOKEN_ADDRESS = accounts[9];
     let reputationSystem;
-    let carbonVoteX;
+    let carbonVoteXCore;
+    let reputationSystemAddress;
+    let carbonVoteXCoreAddress;
 
     before(async() => {
-        carbonVoteX = await CarbonVoteX.deployed();
+        carbonVoteXCore = await CarbonVoteXCore.deployed();
         reputationSystem = await ReputationSystem.deployed();
+        reputationSystemAddress = reputationSystem.address;
+        carbonVoteXCoreAddress = carbonVoteXCore.address;
+        await carbonVoteXCore.setReceiver(
+            web3.utils.sha3(NAMESPACE_REPUTATION_SYSTEM),
+            reputationSystemAddress,
+            {from: ROOT_ACCOUNT});
+
+        // gain auth from carbonVoteXCore to register poll
+        await carbonVoteXCore.setPermissions(
+            [web3.utils.sha3("register")],
+            [reputationSystemAddress]);
     });
 
-    it("should contain the same CarbonVoteX " +
-      "instance as the deployed CarbonVoteX", async () => {
+    it("should contain the same carbonVoteXCore " +
+      "instance as the deployed carbonVoteXCore", async () => {
         assert.equal(
-            await reputationSystem.carbon.call(),
-            carbonVoteX.address);
+            await reputationSystem.carbonVoteXCore.call(),
+            carbonVoteXCoreAddress);
     });
 
     it("should register PollRequest properly", async () => {
@@ -44,8 +60,8 @@ contract('ReputationSystem', accounts => {
             PSEUDO_PRICE_ONE,
             PRICE_GTE_ONE_TRUE,
             TOKEN_ADDRESS,
-            {from: REGISTER_ACCOUNT}
-        );
+            CONTEXT_TYPES,
+            {from: REGISTER_ACCOUNT});
 
         let pollRequest = await reputationSystem.pollRequests.call(pollId);
         assert.equal(
@@ -68,8 +84,8 @@ contract('ReputationSystem', accounts => {
             PSEUDO_PRICE_ONE,
             PRICE_GTE_ONE_TRUE,
             TOKEN_ADDRESS,
-            {from: REGISTER_ACCOUNT}
-        );
+            CONTEXT_TYPES,
+            {from: REGISTER_ACCOUNT});
 
         try {
             await reputationSystem.registerPollRequest(
@@ -79,8 +95,8 @@ contract('ReputationSystem', accounts => {
                 PSEUDO_PRICE_ONE,
                 PRICE_GTE_ONE_TRUE,
                 TOKEN_ADDRESS,
-                {from: REGISTER_ACCOUNT}
-            );
+                CONTEXT_TYPES,
+                {from: REGISTER_ACCOUNT});
             assert.fail();
         } catch (err) {
             assert.ok(/revert/.test(err.message));
@@ -98,6 +114,7 @@ contract('ReputationSystem', accounts => {
             PSEUDO_PRICE_ONE,
             PRICE_GTE_ONE_TRUE,
             TOKEN_ADDRESS,
+            CONTEXT_TYPES,
             {from: REGISTER_ACCOUNT}
         );
 
@@ -108,6 +125,7 @@ contract('ReputationSystem', accounts => {
             PSEUDO_PRICE_ONE,
             PRICE_GTE_ONE_TRUE,
             TOKEN_ADDRESS,
+            CONTEXT_TYPES,
             {from: REGISTER_ACCOUNT}
         );
 
@@ -135,6 +153,7 @@ contract('ReputationSystem', accounts => {
             PSEUDO_PRICE_ONE,
             PRICE_GTE_ONE_TRUE,
             TOKEN_ADDRESS,
+            CONTEXT_TYPES,
             {from: REGISTER_ACCOUNT}
           );
           assert.fail();
@@ -149,14 +168,6 @@ contract('ReputationSystem', accounts => {
         let projectId = "project001";
         let currentTime = Math.floor(Date.now() / 1000);
 
-        // gain auth from CarbonVoteX to register poll through ReputationSystem
-        let register = await carbonVoteX.functionSig.call(
-            web3.utils.sha3("register"));
-        await carbonVoteX.permit(
-            reputationSystem.address,
-            carbonVoteX.address,
-            register);
-
         await reputationSystem.registerPollRequest(
             pollIdOne,
             currentTime - 50,
@@ -164,6 +175,7 @@ contract('ReputationSystem', accounts => {
             PSEUDO_PRICE_ONE,
             PRICE_GTE_ONE_TRUE,
             TOKEN_ADDRESS,
+            CONTEXT_TYPES,
             {from: REGISTER_ACCOUNT}
         );
 
@@ -174,6 +186,7 @@ contract('ReputationSystem', accounts => {
           PSEUDO_PRICE_ONE,
           PRICE_GTE_ONE_TRUE,
           TOKEN_ADDRESS,
+          CONTEXT_TYPES,
           {from: REGISTER_ACCOUNT}
         );
 
@@ -189,13 +202,16 @@ contract('ReputationSystem', accounts => {
 
         let project =
           await reputationSystem.idToProject.call(projectId);
-
         assert.equal(
           project[0].toNumber(), 2);
+
+        assert.equal(await reputationSystem.pollExist.call(pollIdTwo), true);
+        assert.equal(await reputationSystem.pollExist.call(pollIdOne), true);
+
     });
 
 
-    it("should not start a poll without auth from CarbonVoteX", async () => {
+    it("should not start a poll without auth from carbonVoteXCore", async () => {
         let pollId = "0x07";
 
         let projectId = "project002";
@@ -208,15 +224,16 @@ contract('ReputationSystem', accounts => {
             PSEUDO_PRICE_ONE,
             PRICE_GTE_ONE_TRUE,
             TOKEN_ADDRESS,
+            CONTEXT_TYPES,
             {from: REGISTER_ACCOUNT}
         );
 
-        // remove auth to register poll from ReputationSystem
-        let register = await carbonVoteX.functionSig.call(
+        // remove auth to register poll
+        let register = await carbonVoteXCore.functionSig.call(
             web3.utils.sha3("register"));
-        await carbonVoteX.forbid(
-            reputationSystem.address,
-            carbonVoteX.address,
+        await carbonVoteXCore.forbid(
+            reputationSystemAddress,
+            carbonVoteXCoreAddress,
             register);
 
         try {
@@ -228,9 +245,14 @@ contract('ReputationSystem', accounts => {
         } catch (err) {
             assert.ok(/revert/.test(err.message));
         }
+
+        // restore auth from carbonVoteXCore to register poll
+        await carbonVoteXCore.setPermissions(
+            [web3.utils.sha3("register")],
+            [reputationSystemAddress]);
     });
 
-    it("should delegate votes properly", async () => {
+    it("should vote properly", async () => {
         let pollId = "0x08";
         let projectId = "project003";
         let currentTime = Math.floor(Date.now() / 1000);
@@ -239,22 +261,6 @@ contract('ReputationSystem', accounts => {
         let votesInWeiForContextTypeTwoAndMemberOne = 20;
         let votesInWeiForContextTypeTwoAndMemberTwo = 60;
 
-        // gain auth from CarbonVoteX to register poll through ReputationSystem
-        let register = await carbonVoteX.functionSig.call(
-            web3.utils.sha3("register"));
-        await carbonVoteX.permit(
-            reputationSystem.address,
-            carbonVoteX.address,
-            register);
-
-        // gain auth from CarbonVoteX to voteFor through ReputationSystem
-        let voteFor = await carbonVoteX.functionSig.call(
-            web3.utils.sha3("voteFor"));
-        await carbonVoteX.permit(
-            reputationSystem.address,
-            carbonVoteX.address,
-            voteFor);
-
         await reputationSystem.registerPollRequest(
           pollId,
           currentTime - 50,
@@ -262,6 +268,7 @@ contract('ReputationSystem', accounts => {
           PSEUDO_PRICE_ONE,
           PRICE_GTE_ONE_TRUE,
           TOKEN_ADDRESS,
+          CONTEXT_TYPES,
           {from: REGISTER_ACCOUNT}
         );
 
@@ -270,23 +277,31 @@ contract('ReputationSystem', accounts => {
           pollId,
           {from: REGISTER_ACCOUNT});
 
+        assert.equal(await reputationSystem.pollExist.call(pollId), true);
+
         // set up upper vote limit for voters
-        await carbonVoteX.writeAvailableVotes(
-          pollId,
-          VOTER_ACCOUNT_ONE,
-          TOTAL_VOTES_LIMIT,
-          {from: MASTER_ACCOUNT}
-        );
+        await carbonVoteXCore.writeAvailableVotes(
+            web3.utils.sha3(NAMESPACE_REPUTATION_SYSTEM),
+            pollId,
+            VOTER_ACCOUNT_ONE,
+            TOTAL_VOTES_LIMIT,
+            {from: MASTER_ACCOUNT});
 
         // check availableVotes for voter
-        let availableVotes = await carbonVoteX.readAvailableVotes.call(
-            pollId, VOTER_ACCOUNT_ONE);
-
+        let availableVotesForContextTypeOne = await
+            reputationSystem.readAvailableVotesForContextType(
+                pollId, VOTER_ACCOUNT_ONE, CONTEXT_TYPE_ONE);
         assert.equal(
-            availableVotes.toNumber(), TOTAL_VOTES_LIMIT);
+            availableVotesForContextTypeOne.toNumber(), TOTAL_VOTES_LIMIT);
 
-        // delegate votes
-        await reputationSystem.delegate(
+        let availableVotesForContextTypeTwo = await
+            reputationSystem.readAvailableVotesForContextType(
+                pollId, VOTER_ACCOUNT_ONE, CONTEXT_TYPE_TWO);
+        assert.equal(
+            availableVotesForContextTypeTwo.toNumber(), TOTAL_VOTES_LIMIT);
+
+        // vote for context types
+        await reputationSystem.vote(
             projectId,
             MEMBER_ACCOUNT_ONE,
             CONTEXT_TYPE_ONE,
@@ -295,7 +310,7 @@ contract('ReputationSystem', accounts => {
             {from: VOTER_ACCOUNT_ONE}
         );
 
-        await reputationSystem.delegate(
+        await reputationSystem.vote(
           projectId,
           MEMBER_ACCOUNT_TWO,
           CONTEXT_TYPE_TWO,
@@ -304,7 +319,7 @@ contract('ReputationSystem', accounts => {
           {from: VOTER_ACCOUNT_ONE}
         );
 
-        await reputationSystem.delegate(
+        await reputationSystem.vote(
           projectId,
           MEMBER_ACCOUNT_TWO,
           CONTEXT_TYPE_ONE,
@@ -313,7 +328,7 @@ contract('ReputationSystem', accounts => {
           {from: VOTER_ACCOUNT_ONE}
         );
 
-        await reputationSystem.delegate(
+        await reputationSystem.vote(
           projectId,
           MEMBER_ACCOUNT_ONE,
           CONTEXT_TYPE_TWO,
@@ -322,10 +337,9 @@ contract('ReputationSystem', accounts => {
           {from: VOTER_ACCOUNT_ONE}
         );
 
-
         // check vote results for voter
         let votesForContextOneByVoterOne =
-            await carbonVoteX.getVotingResultByVoter.call(
+            await reputationSystem.getVotingResultForContextTypeByVoter.call(
               pollId, VOTER_ACCOUNT_ONE, CONTEXT_TYPE_ONE);
         assert.equal(
             votesForContextOneByVoterOne,
@@ -333,7 +347,7 @@ contract('ReputationSystem', accounts => {
                 votesInWeiForContextTypeOneAndMemberOne);
 
         let votesForContextTwoByVoterOne =
-            await carbonVoteX.getVotingResultByVoter.call(
+            await reputationSystem.getVotingResultForContextTypeByVoter.call(
                 pollId, VOTER_ACCOUNT_ONE, CONTEXT_TYPE_TWO);
         assert.equal(
           votesForContextTwoByVoterOne,
@@ -342,7 +356,7 @@ contract('ReputationSystem', accounts => {
 
         // check project-specific reputation
         let votesForContextOneAndMemeberOne =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 projectId, MEMBER_ACCOUNT_ONE, CONTEXT_TYPE_ONE);
         assert.equal(
             votesForContextOneAndMemeberOne[0].toNumber(), 0);
@@ -351,7 +365,7 @@ contract('ReputationSystem', accounts => {
             votesInWeiForContextTypeOneAndMemberOne);
 
         let votesForContextOneAndMemeberTwo =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 projectId, MEMBER_ACCOUNT_TWO, CONTEXT_TYPE_ONE);
         assert.equal(
             votesForContextOneAndMemeberTwo[0].toNumber(), 0);
@@ -360,7 +374,7 @@ contract('ReputationSystem', accounts => {
             votesInWeiForContextTypeOneAndMemberTwo);
 
         let votesForContextTwoAndMemeberOne =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 projectId, MEMBER_ACCOUNT_ONE, CONTEXT_TYPE_TWO);
         assert.equal(
             votesForContextTwoAndMemeberOne[0].toNumber(), 0);
@@ -369,7 +383,7 @@ contract('ReputationSystem', accounts => {
             votesInWeiForContextTypeTwoAndMemberOne);
 
         let votesForContextTwoAndMemeberTwo =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 projectId, MEMBER_ACCOUNT_TWO, CONTEXT_TYPE_TWO);
         assert.equal(
             votesForContextTwoAndMemeberTwo[0].toNumber(), 0);
@@ -382,7 +396,7 @@ contract('ReputationSystem', accounts => {
             web3.utils.sha3(reputationSystem.address);
 
         let globalVotesForContextOneAndMemeberOne =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 globalReputationsSystemID, MEMBER_ACCOUNT_ONE, CONTEXT_TYPE_ONE);
         assert.equal(
             globalVotesForContextOneAndMemeberOne[0].toNumber(), 0);
@@ -391,7 +405,7 @@ contract('ReputationSystem', accounts => {
             votesInWeiForContextTypeOneAndMemberOne);
 
         let globalVotesForContextOneAndMemeberTwo =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 globalReputationsSystemID, MEMBER_ACCOUNT_TWO, CONTEXT_TYPE_ONE);
         assert.equal(
             globalVotesForContextOneAndMemeberTwo[0].toNumber(), 0);
@@ -400,7 +414,7 @@ contract('ReputationSystem', accounts => {
             votesInWeiForContextTypeOneAndMemberTwo);
 
         let globalVotesForContextTwoAndMemeberOne =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 globalReputationsSystemID, MEMBER_ACCOUNT_ONE, CONTEXT_TYPE_TWO);
         assert.equal(
             globalVotesForContextTwoAndMemeberOne[0].toNumber(), 0);
@@ -409,7 +423,7 @@ contract('ReputationSystem', accounts => {
             votesInWeiForContextTypeTwoAndMemberOne);
 
         let globalVotesForContextTwoAndMemeberTwo =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 globalReputationsSystemID, MEMBER_ACCOUNT_TWO, CONTEXT_TYPE_TWO);
         assert.equal(
             globalVotesForContextTwoAndMemeberTwo[0].toNumber(), 0);
@@ -422,29 +436,10 @@ contract('ReputationSystem', accounts => {
         let pollId = "0x09";
         let projectId = "project004";
         let currentTime = Math.floor(Date.now() / 1000);
-        let votesInWeiForContextTypeOneAndMemberThree = 40;
-        let votesInWeiForContextTypeOneAndMemberFour = 6;
+        let votesInWeiForContextTypeOneAndMemberThree = 90;
+        let votesInWeiForContextTypeOneAndMemberFour = 10;
         let votesInWeiForContextTypeTwoAndMemberThree = 2;
         let votesInWeiForContextTypeTwoAndMemberFour = 63;
-
-        carbonVoteX = await CarbonVoteX.deployed();
-        reputationSystem = await ReputationSystem.deployed();
-
-        // gain auth from CarbonVoteX to register poll through ReputationSystem
-        let register = await carbonVoteX.functionSig.call(
-            web3.utils.sha3("register"));
-        await carbonVoteX.permit(
-            reputationSystem.address,
-            carbonVoteX.address,
-            register);
-
-        // gain auth from CarbonVoteX to voteFor through ReputationSystem
-        let voteFor = await carbonVoteX.functionSig.call(
-            web3.utils.sha3("voteFor"));
-        await carbonVoteX.permit(
-            reputationSystem.address,
-            carbonVoteX.address,
-            voteFor);
 
         await reputationSystem.registerPollRequest(
             pollId,
@@ -453,6 +448,7 @@ contract('ReputationSystem', accounts => {
             PSEUDO_PRICE_ONE,
             PRICE_GTE_ONE_TRUE,
             TOKEN_ADDRESS,
+            CONTEXT_TYPES,
             {from: REGISTER_ACCOUNT});
 
         await reputationSystem.startPoll(
@@ -461,14 +457,16 @@ contract('ReputationSystem', accounts => {
             {from: REGISTER_ACCOUNT});
 
         // set up upper vote limit for voters
-        await carbonVoteX.writeAvailableVotes(
+        await carbonVoteXCore.writeAvailableVotes(
+            web3.utils.sha3(NAMESPACE_REPUTATION_SYSTEM),
             pollId,
             VOTER_ACCOUNT_TWO,
             TOTAL_VOTES_LIMIT,
             {from: MASTER_ACCOUNT});
 
-        // delegate votes
-        await reputationSystem.delegate(
+
+        // vote for context types
+        await reputationSystem.vote(
             projectId,
             MEMBER_ACCOUNT_THREE,
             CONTEXT_TYPE_ONE,
@@ -476,7 +474,7 @@ contract('ReputationSystem', accounts => {
             votesInWeiForContextTypeOneAndMemberThree,
             {from: VOTER_ACCOUNT_TWO});
 
-        await reputationSystem.delegate(
+        await reputationSystem.vote(
             projectId,
             MEMBER_ACCOUNT_FOUR,
             CONTEXT_TYPE_TWO,
@@ -484,7 +482,7 @@ contract('ReputationSystem', accounts => {
             votesInWeiForContextTypeTwoAndMemberFour,
             {from: VOTER_ACCOUNT_TWO});
 
-        await reputationSystem.delegate(
+        await reputationSystem.vote(
             projectId,
             MEMBER_ACCOUNT_FOUR,
             CONTEXT_TYPE_ONE,
@@ -492,7 +490,7 @@ contract('ReputationSystem', accounts => {
             votesInWeiForContextTypeOneAndMemberFour,
             {from: VOTER_ACCOUNT_TWO});
 
-        await reputationSystem.delegate(
+        await reputationSystem.vote(
             projectId,
             MEMBER_ACCOUNT_THREE,
             CONTEXT_TYPE_TWO,
@@ -520,7 +518,7 @@ contract('ReputationSystem', accounts => {
 
         // check project-specific reputation
         let votesForContextOneAndMemeberThree =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 projectId, MEMBER_ACCOUNT_THREE, CONTEXT_TYPE_ONE);
         assert.equal(
             votesForContextOneAndMemeberThree[0].toNumber(),
@@ -529,7 +527,7 @@ contract('ReputationSystem', accounts => {
             votesForContextOneAndMemeberThree[1].toNumber(), 0);
 
         let votesForContextOneAndMemeberFour =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 projectId, MEMBER_ACCOUNT_FOUR, CONTEXT_TYPE_ONE);
         assert.equal(
             votesForContextOneAndMemeberFour[0].toNumber(),
@@ -538,7 +536,7 @@ contract('ReputationSystem', accounts => {
             votesForContextOneAndMemeberFour[1].toNumber(), 0);
 
         let votesForContextTwoAndMemeberThree =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 projectId, MEMBER_ACCOUNT_THREE, CONTEXT_TYPE_TWO);
         assert.equal(
             votesForContextTwoAndMemeberThree[0].toNumber(),
@@ -547,7 +545,7 @@ contract('ReputationSystem', accounts => {
             votesForContextTwoAndMemeberThree[1].toNumber(), 0);
 
         let votesForContextTwoAndMemeberFour =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 projectId, MEMBER_ACCOUNT_FOUR, CONTEXT_TYPE_TWO);
         assert.equal(
             votesForContextTwoAndMemeberFour[0].toNumber(),
@@ -560,7 +558,7 @@ contract('ReputationSystem', accounts => {
             web3.utils.sha3(reputationSystem.address);
 
         let globalVotesForContextOneAndMemeberThree =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 globalReputationsSystemID, MEMBER_ACCOUNT_THREE, CONTEXT_TYPE_ONE);
         assert.equal(
             globalVotesForContextOneAndMemeberThree[0].toNumber(),
@@ -569,7 +567,7 @@ contract('ReputationSystem', accounts => {
             globalVotesForContextOneAndMemeberThree[1].toNumber(), 0);
 
         let globalVotesForContextOneAndMemeberFour =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 globalReputationsSystemID, MEMBER_ACCOUNT_FOUR, CONTEXT_TYPE_ONE);
         assert.equal(
             globalVotesForContextOneAndMemeberFour[0].toNumber(),
@@ -578,7 +576,7 @@ contract('ReputationSystem', accounts => {
             globalVotesForContextOneAndMemeberFour[1].toNumber(), 0);
 
         let globalVotesForContextTwoAndMemeberThree =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 globalReputationsSystemID, MEMBER_ACCOUNT_THREE, CONTEXT_TYPE_TWO);
         assert.equal(
                 globalVotesForContextTwoAndMemeberThree[0].toNumber(),
@@ -587,12 +585,83 @@ contract('ReputationSystem', accounts => {
                 globalVotesForContextTwoAndMemeberThree[1].toNumber(), 0);
 
         let globalVotesForContextTwoAndMemeberFour =
-            await reputationSystem.getVotes.call(
+            await reputationSystem.getVotesForMember.call(
                 globalReputationsSystemID, MEMBER_ACCOUNT_FOUR, CONTEXT_TYPE_TWO);
         assert.equal(
             globalVotesForContextTwoAndMemeberFour[0].toNumber(),
             votesInWeiForContextTypeTwoAndMemberFour);
         assert.equal(
             globalVotesForContextTwoAndMemeberFour[1].toNumber(), 0);
+    });
+
+    it("should not allow to vote more than limited ", async () => {
+        let pollId = "0x10";
+        let projectId = "project005";
+        let currentTime = Math.floor(Date.now() / 1000);
+        let votesInWeiForContextTypeOneAndMemberThree = 90;
+        let votesInWeiForContextTypeOneAndMemberFour = 5;
+        let votesInWeiForContextTypeTwoAndMemberThree = 50;
+        let votesInWeiForContextTypeTwoAndMemberFour = 63;
+
+        await reputationSystem.registerPollRequest(
+            pollId,
+            currentTime - 20,
+            currentTime + 20,
+            PSEUDO_PRICE_ONE,
+            PRICE_GTE_ONE_TRUE,
+            TOKEN_ADDRESS,
+            CONTEXT_TYPES,
+            {from: REGISTER_ACCOUNT});
+
+        await reputationSystem.startPoll(
+            projectId,
+            pollId,
+            {from: REGISTER_ACCOUNT});
+
+        // set up upper vote limit for voters
+        await carbonVoteXCore.writeAvailableVotes(
+            web3.utils.sha3(NAMESPACE_REPUTATION_SYSTEM),
+            pollId,
+            VOTER_ACCOUNT_TWO,
+            TOTAL_VOTES_LIMIT,
+            {from: MASTER_ACCOUNT});
+
+        // vote for context types
+        await reputationSystem.vote(
+            projectId,
+            MEMBER_ACCOUNT_THREE,
+            CONTEXT_TYPE_ONE,
+            pollId,
+            votesInWeiForContextTypeOneAndMemberThree,
+            {from: VOTER_ACCOUNT_TWO});
+
+        await reputationSystem.vote(
+            projectId,
+            MEMBER_ACCOUNT_FOUR,
+            CONTEXT_TYPE_TWO,
+            pollId,
+            votesInWeiForContextTypeTwoAndMemberFour,
+            {from: VOTER_ACCOUNT_TWO});
+
+        await reputationSystem.vote(
+            projectId,
+            MEMBER_ACCOUNT_FOUR,
+            CONTEXT_TYPE_ONE,
+            pollId,
+            votesInWeiForContextTypeOneAndMemberFour,
+            {from: VOTER_ACCOUNT_TWO});
+
+        try {
+            await reputationSystem.vote(
+                projectId,
+                MEMBER_ACCOUNT_THREE,
+                CONTEXT_TYPE_TWO,
+                pollId,
+                votesInWeiForContextTypeTwoAndMemberThree,
+                {from: VOTER_ACCOUNT_TWO});
+                assert.fail();
+        } catch (err) {
+            assert.ok(/revert/.test(err.message));
+        }
     });
 });
