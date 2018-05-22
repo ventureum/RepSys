@@ -65,9 +65,14 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         bytes32[] contextTypes
     );
 
+    event UpdateIntervalReset(uint _updateInterval);
+
+    event VotesDiscountFactorsReset(uint _prevVotesDiscount, uint _newVotesDiscount);
+
     struct Context {
         uint lastUpdated;
-        uint updatedTimestamp;
+        // the block number when votes are updated
+        uint updatedBlockNumber;
         uint votes;
         mapping(bytes32 => uint) pendingVotes;
         uint totalPendingVotes;
@@ -81,8 +86,8 @@ contract ReputationSystem is ICarbonVoteXReceiver {
     struct Project {
         uint pollNonce;
         bytes32 oldestPollId;
-        uint oldestPollStartBlock;
         bytes32 latestPollId;
+        uint lastUpdatedBlockSegment;
         uint latestPollEndBlock;
         mapping(uint => bytes32) nonceToLatestPollId;
         mapping(uint => bytes32) nonceToOldestPollId;
@@ -142,6 +147,13 @@ contract ReputationSystem is ICarbonVoteXReceiver {
 
     bytes32 public namespace;
 
+    // updateInterval for vote
+    uint private updateInterval;
+
+    uint private prevVotesDiscount;
+
+    uint private newVotesDiscount;
+
 
     // modifiers
     modifier onlyNonGlobalReputationsSystemID(bytes32 _reputationsSystemID) {
@@ -154,13 +166,27 @@ contract ReputationSystem is ICarbonVoteXReceiver {
 
     /**
     * constructor for ReputationSystem
-    *
-    # @param _namespace the namespace of this CarbonVoteX receiver
+
     * @param _carbonVoteXCore the address of a carbonVoteXCore
+    * @param _namespace the namespace of this CarbonVoteX receiver
+    * @param _updateInterval the update interval for vote
+    * @param _prevVotesDiscount the discount factor for previous votes
+    * @param _newVotesDiscount the discount factor for new votes
     */
-    constructor(bytes32 _namespace, address _carbonVoteXCore) public {
-        namespace = _namespace;
+    constructor(
+        address _carbonVoteXCore,
+        bytes32 _namespace,
+        uint _updateInterval,
+        uint _prevVotesDiscount,
+        uint _newVotesDiscount
+    )
+        public
+    {
         carbonVoteXCore = CarbonVoteXCore(_carbonVoteXCore);
+        namespace = _namespace;
+        updateInterval = _updateInterval;
+        prevVotesDiscount = _prevVotesDiscount;
+        newVotesDiscount = _newVotesDiscount;
         globalReputationsSystemID = keccak256(address(this));
     }
 
@@ -427,6 +453,33 @@ contract ReputationSystem is ICarbonVoteXReceiver {
     }
 
     /**
+    * Reset the update interval
+    *
+    * @param _updateInterval the update interval for vote
+    */
+    function resetUpdateInterval(uint _updateInterval) public {
+        require(msg.sender == address(this));
+        updateInterval = _updateInterval;
+        emit UpdateIntervalReset(_updateInterval);
+    }
+
+    /**
+    * Reset discount factors for vote updating.
+    * The factor is the percentages out of 100.
+    * e.g. if the factor value is 90, it represent 90% (i.e. 0.9)
+    *
+    * @param _prevVotesDiscount the discount factor for previous votes
+    * @param _newVotesDiscount the discount factor for new votes
+    */
+    function resetVotesDiscountFactors(uint _prevVotesDiscount, uint _newVotesDiscount) public {
+        require(msg.sender == address(this));
+        prevVotesDiscount = _prevVotesDiscount;
+        newVotesDiscount = _newVotesDiscount;
+
+        emit VotesDiscountFactorsReset(_prevVotesDiscount, _newVotesDiscount);
+    }
+
+    /**
     * Delegates votes to a principal in a poll, called by proxies
     *
     * @param id the id of the reputation system
@@ -488,11 +541,10 @@ contract ReputationSystem is ICarbonVoteXReceiver {
             .repVec[member][contextType];
 
         if((idToProject[globalReputationsSystemID].pollNonce == 0) ||
-            startBlock >= idToProject[globalReputationsSystemID].oldestPollStartBlock + 100) {
-            idToProject[globalReputationsSystemID].oldestPollStartBlock = startBlock;
+            (idToProject[globalReputationsSystemID].lastUpdatedBlockSegment < startBlock / updateInterval)) {
+            idToProject[globalReputationsSystemID].lastUpdatedBlockSegment = startBlock / updateInterval;
             idToProject[globalReputationsSystemID].oldestPollId = pollId;
             idToProject[globalReputationsSystemID].pollNonce += 1;
-
         }
 
         if (endBlock > idToProject[globalReputationsSystemID].latestPollEndBlock) {
@@ -513,7 +565,6 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         idToProject[globalReputationsSystemID]
             .nonceToOldestPollId[idToProject[globalReputationsSystemID].pollNonce] =
                 idToProject[globalReputationsSystemID].oldestPollId;
-
 
         emit Voted(
             msg.sender,
@@ -565,11 +616,12 @@ contract ReputationSystem is ICarbonVoteXReceiver {
                 if (pollNonce == 1) {
                     context.votes =  pendingVotes;
                 } else {
-                    context.votes = (context.votes * 9 + pendingVotes)/10;
+                    context.votes =
+                        (context.votes * prevVotesDiscount + pendingVotes * newVotesDiscount) / 100;
                 }
 
                 context.lastUpdated = i;
-                context.updatedTimestamp = now;
+                context.updatedBlockNumber = block.number;
                 if (context.totalPendingVotes >= pendingVotes) {
                     context.totalPendingVotes -= pendingVotes;
                 }
