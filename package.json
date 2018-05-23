@@ -22,9 +22,7 @@
   "homepage": "https://github.com/ventureum/RepSys#readme",
   "dependencies": {
     "carbonvotex": "^1.0.1",
-    "ganache-cli": "^6.1.0",
     "openzeppelin-solidity": "1.9.0",
-    "truffle-hdwallet-provider": "0.0.4",
-    "truffle-test-helpers": "0.0.5"
+    "truffle-hdwallet-provider": "0.0.4"
   }
 }

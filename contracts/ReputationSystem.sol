@@ -1,11 +1,15 @@
 pragma solidity ^0.4.23;
 
-import "openzeppelin-solidity/contracts/token/ERC20/ERC20.sol";
 import "carbonvotex/contracts/CarbonVoteXCore.sol";
 import "carbonvotex/contracts/ICarbonVoteXReceiver.sol";
+import "openzeppelin-solidity/contracts/token/ERC20/ERC20.sol";
+import "openzeppelin-solidity/contracts/math/SafeMath.sol";
 
 
 contract ReputationSystem is ICarbonVoteXReceiver {
+    // apply SafeMath to uint
+    using SafeMath for uint;
+
     // events
     event PollRequestRegistered(
         address indexed requester,
@@ -69,6 +73,7 @@ contract ReputationSystem is ICarbonVoteXReceiver {
 
     event VotesDiscountFactorsReset(uint _prevVotesDiscount, uint _newVotesDiscount);
 
+
     struct Context {
         uint lastUpdated;
         // the block number when votes are updated
@@ -115,7 +120,8 @@ contract ReputationSystem is ICarbonVoteXReceiver {
 
     struct Poll {
         // the assigned votes for voter
-        uint totalVotes;
+        // voter address => votes
+        mapping (address => uint) totalVotesForVoter;
 
         // voter address => (contextType => votes)
         // choice can be hashed value of voting options
@@ -164,9 +170,10 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         _;
     }
 
+
     /**
     * constructor for ReputationSystem
-
+    *
     * @param _carbonVoteXCore the address of a carbonVoteXCore
     * @param _namespace the namespace of this CarbonVoteX receiver
     * @param _updateInterval the update interval for vote
@@ -188,16 +195,6 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         prevVotesDiscount = _prevVotesDiscount;
         newVotesDiscount = _newVotesDiscount;
         globalReputationsSystemID = keccak256(address(this));
-    }
-
-    /**
-     * Gets the amount of gas remaining for voter
-     *
-     * @param pollId UUID (hash value) of a poll
-     * @param voter address of a voter
-     */
-    function getGasSent(bytes32 pollId, address voter) external view returns (uint) {
-        return carbonVoteXCore.getGasSent(namespace, pollId, voter);
     }
 
     /**
@@ -228,7 +225,7 @@ contract ReputationSystem is ICarbonVoteXReceiver {
     function writeAvailableVotes(bytes32 pollId, address voter, uint votes) external {
         require (msg.sender == address(carbonVoteXCore));
 
-        polls[pollId].totalVotes = votes;
+        polls[pollId].totalVotesForVoter[voter] = votes;
         bytes32[] storage contextTypes = pollRequests[pollId].contextTypes;
         for (uint i = 0; i < contextTypes.length; i++){
             polls[pollId].availableVotesForContextType[voter][contextTypes[i]] = votes;
@@ -236,13 +233,18 @@ contract ReputationSystem is ICarbonVoteXReceiver {
     }
 
     /**
-    * Returns whether a voter has already obtained votes.
+    * Returns how many votes a voter has already obtained
     *
     * @param pollId UUID (hash value) of a poll
     * @param voter address of a voter
     */
-    function voteObtained(bytes32 pollId, address voter) external view returns (bool) {
-        return carbonVoteXCore.voteObtained(namespace, pollId, voter);
+    function getTotalVotesObtainedByVoter(bytes32 pollId, address voter)
+        external
+        view
+        returns (uint)
+    {
+        require(voteObtained(pollId, voter));
+        return polls[pollId].totalVotesForVoter[voter];
     }
 
     /**
@@ -435,8 +437,8 @@ contract ReputationSystem is ICarbonVoteXReceiver {
 
         // 20 blocks is roughly 5 min
         // for testing only
-        uint startBlock = block.number + 20;
-        uint endBlock = startBlock + 20;
+        uint startBlock = block.number.add(20);
+        uint endBlock = startBlock.add(20);
         carbonVoteXCore.register(
             namespace,
             startBlock,
@@ -444,7 +446,7 @@ contract ReputationSystem is ICarbonVoteXReceiver {
             pollId,
             pollRequests[pollId].tokenAddress);
 
-        idToProject[id].pollNonce += 1;
+        idToProject[id].pollNonce = idToProject[id].pollNonce.add(1);
         uint pollNonce = idToProject[id].pollNonce;
         idToProject[id].nonceToLatestPollId[pollNonce] = pollId;
         idToProject[id].nonceToOldestPollId[pollNonce] = pollId;
@@ -511,17 +513,20 @@ contract ReputationSystem is ICarbonVoteXReceiver {
 
         // voter cannot vote more votes than it has for contextType.
         require(
-            polls[pollId].availableVotesForContextType[msg.sender][contextType] >= votes
+            polls[pollId].availableVotesForContextType[msg.sender][contextType].sub(votes) >= 0
         );
 
-        // deduct voter's available votes from.
-        polls[pollId].availableVotesForContextType[msg.sender][contextType] -= votes;
+        // deduct voter's available votes for ContextType
+        polls[pollId].availableVotesForContextType[msg.sender][contextType] =
+            polls[pollId].availableVotesForContextType[msg.sender][contextType].sub(votes);
 
         // place votes to voter's choice for contextType.
-        polls[pollId].votesForContextType[msg.sender][contextType] += votes;
+        polls[pollId].votesForContextType[msg.sender][contextType] =
+            polls[pollId].votesForContextType[msg.sender][contextType].add(votes);
 
         // place votes to totalVotesByChoice;
-        polls[pollId].totalVotesForContextType[contextType] += votes;
+        polls[pollId].totalVotesForContextType[contextType] =
+            polls[pollId].totalVotesForContextType[contextType].add(votes);
 
 
         // record voting results, here we use votes in wei as our standard unit
@@ -529,8 +534,8 @@ contract ReputationSystem is ICarbonVoteXReceiver {
 
         // update project-specific reputation
         Context storage context = reputations[id].repVec[member][contextType];
-        context.pendingVotes[pollId] += votesInWei;
-        context.totalPendingVotes += votesInWei;
+        context.pendingVotes[pollId] = context.pendingVotes[pollId].add(votesInWei);
+        context.totalPendingVotes = context.totalPendingVotes.add(votesInWei);
 
         // update global reputation
         uint startBlock;
@@ -541,10 +546,13 @@ contract ReputationSystem is ICarbonVoteXReceiver {
             .repVec[member][contextType];
 
         if((idToProject[globalReputationsSystemID].pollNonce == 0) ||
-            (idToProject[globalReputationsSystemID].lastUpdatedBlockSegment < startBlock / updateInterval)) {
-            idToProject[globalReputationsSystemID].lastUpdatedBlockSegment = startBlock / updateInterval;
+            (idToProject[globalReputationsSystemID].lastUpdatedBlockSegment
+                .sub(startBlock.div(updateInterval)) < 0)) {
+            idToProject[globalReputationsSystemID].lastUpdatedBlockSegment =
+                startBlock.div(updateInterval);
             idToProject[globalReputationsSystemID].oldestPollId = pollId;
-            idToProject[globalReputationsSystemID].pollNonce += 1;
+            idToProject[globalReputationsSystemID].pollNonce =
+                idToProject[globalReputationsSystemID].pollNonce.add(1);
         }
 
         if (endBlock > idToProject[globalReputationsSystemID].latestPollEndBlock) {
@@ -553,9 +561,10 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         }
 
         // add votes to the oldest poll available
-        globalContext
-            .pendingVotes[idToProject[globalReputationsSystemID].oldestPollId] += votesInWei;
-        globalContext.totalPendingVotes += votesInWei;
+        bytes32 oldestPollId = idToProject[globalReputationsSystemID].oldestPollId;
+        globalContext.pendingVotes[oldestPollId] =
+            globalContext.pendingVotes[oldestPollId].add(votesInWei);
+        globalContext.totalPendingVotes = globalContext.totalPendingVotes.add(votesInWei);
 
 
         idToProject[globalReputationsSystemID]
@@ -563,8 +572,7 @@ contract ReputationSystem is ICarbonVoteXReceiver {
                 idToProject[globalReputationsSystemID].latestPollId;
 
         idToProject[globalReputationsSystemID]
-            .nonceToOldestPollId[idToProject[globalReputationsSystemID].pollNonce] =
-                idToProject[globalReputationsSystemID].oldestPollId;
+            .nonceToOldestPollId[idToProject[globalReputationsSystemID].pollNonce] = oldestPollId;
 
         emit Voted(
             msg.sender,
@@ -599,10 +607,10 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         Context storage context = reputations[id].repVec[member][contextType];
         uint pollNonce = idToProject[id].pollNonce;
         uint lastUpdated = context.lastUpdated;
-        if (pollNonce > 100 + lastUpdated) {
+        if (pollNonce > lastUpdated.add(100)) {
             // we only update the most recent 100 proxy votings
             // this avoids potential out-of-gas errors
-            lastUpdated = pollNonce - 100;
+            lastUpdated = pollNonce.sub(100);
             context.votes = 0;
             context.totalPendingVotes = 0;
         }
@@ -616,14 +624,16 @@ contract ReputationSystem is ICarbonVoteXReceiver {
                 if (pollNonce == 1) {
                     context.votes =  pendingVotes;
                 } else {
-                    context.votes =
-                        (context.votes * prevVotesDiscount + pendingVotes * newVotesDiscount) / 100;
+                    context.votes = context.votes
+                        .mul(prevVotesDiscount)
+                        .add(pendingVotes.mul(newVotesDiscount))
+                        .div(100);
                 }
 
                 context.lastUpdated = i;
                 context.updatedBlockNumber = block.number;
-                if (context.totalPendingVotes >= pendingVotes) {
-                    context.totalPendingVotes -= pendingVotes;
+                if (context.totalPendingVotes.sub(pendingVotes) >= 0) {
+                    context.totalPendingVotes = context.totalPendingVotes.sub(pendingVotes);
                 }
                 context.pendingVotes[oldestPollId] = 0;
             }
@@ -634,7 +644,7 @@ contract ReputationSystem is ICarbonVoteXReceiver {
                 msg.sender,
                 member,
                 contextType,
-                lastUpdated + 1,
+                lastUpdated.add(1),
                 pollNonce
             );
         } else {
@@ -643,7 +653,7 @@ contract ReputationSystem is ICarbonVoteXReceiver {
                 id,
                 member,
                 contextType,
-                lastUpdated + 1,
+                lastUpdated.add(1),
                 pollNonce
             );
         }
@@ -701,6 +711,15 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         return context.totalPendingVotes != 0;
     }
 
+    /**
+    * Returns whether a voter has already obtained votes.
+    *
+    * @param pollId UUID (hash value) of a poll
+    * @param voter address of a voter
+    */
+    function voteObtained(bytes32 pollId, address voter) public view returns (bool) {
+        return carbonVoteXCore.voteObtained(namespace, pollId, voter);
+    }
 
     /**
     * Checks if a poll exits
@@ -741,7 +760,6 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         return carbonVoteXCore.getPoll(namespace, pollId);
     }
 
-
     /**
     * Returns votes in project's token's basic unit
     *
@@ -762,9 +780,9 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         returns (uint)
     {
         if (priceGteOne)
-            return votesInWei * pseudoPrice;
+            return votesInWei.mul(pseudoPrice);
         else {
-            return votesInWei / pseudoPrice;
+            return votesInWei.div(pseudoPrice);
         }
     }
 
