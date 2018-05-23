@@ -661,7 +661,7 @@ contract('ReputationSystem', accounts => {
                 {from: VOTER_ACCOUNT_TWO});
                 assert.fail();
         } catch (err) {
-            assert.ok(/revert/.test(err.message));
+            assert.ok(/invalid opcode/.test(err.message));
         }
     });
 });
