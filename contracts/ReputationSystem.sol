@@ -1,10 +1,11 @@
 pragma solidity ^0.4.23;
 
 import "openzeppelin-solidity/contracts/token/ERC20/ERC20.sol";
-import "carbonvotex/contracts/CarbonVoteX.sol";
+import "carbonvotex/contracts/CarbonVoteXCore.sol";
+import "carbonvotex/contracts/ICarbonVoteXReceiver.sol";
 
 
-contract ReputationSystem {
+contract ReputationSystem is ICarbonVoteXReceiver {
     // events
     event PollRequestRegistered(
         address indexed requester,
@@ -13,8 +14,10 @@ contract ReputationSystem {
         uint maxStartTime,
         uint pseudoPrice,
         bool priceGteOne,
-        address indexed tokenAddress
+        address indexed tokenAddress,
+        bytes32[] contextTypes
     );
+
     event PollRequestModified(
         address indexed requester,
         bytes32 pollId,
@@ -22,17 +25,22 @@ contract ReputationSystem {
         uint maxStartTime,
         uint pseudoPrice,
         bool priceGteOne,
-        address indexed tokenAddress
+        address indexed tokenAddress,
+        bytes32[] contextTypes
     );
+
     event PollStarted(address indexed requester, bytes32 id, bytes32 pollId);
-    event VotesDelegated(
+
+    event Voted(
         address indexed requester,
         bytes32 id,
         address indexed member,
         bytes32 contextType,
         bytes32 pollId,
-        uint votesInWei
+        uint votesInWei,
+        uint globalNonce
     );
+
     event RepVecContextUpdated(
         address indexed requester,
         bytes32 id,
@@ -41,6 +49,15 @@ contract ReputationSystem {
         uint currentUpdatePollNonceStart,
         uint currentUpdatePollNonceEnd
     );
+
+    event GlobalRepVecContextUpdated(
+        address indexed requester,
+        address indexed member,
+        bytes32 contextType,
+        uint currentUpdatePollNonceStart,
+        uint currentUpdatePollNonceEnd
+    );
+
     event RepVecContextBatchUpdated(
         address indexed requester,
         bytes32 id,
@@ -48,13 +65,14 @@ contract ReputationSystem {
         bytes32[] contextTypes
     );
 
+    event UpdateIntervalReset(uint _updateInterval);
+
+    event VotesDiscountFactorsReset(uint _prevVotesDiscount, uint _newVotesDiscount);
+
     struct Context {
-        bytes32 oldestPollId;
-        uint oldestPollStartBlock;
-        bytes32 latestPollId;
-        uint latestPollEndBlock;
         uint lastUpdated;
-        uint updatedTimestamp;
+        // the block number when votes are updated
+        uint updatedBlockNumber;
         uint votes;
         mapping(bytes32 => uint) pendingVotes;
         uint totalPendingVotes;
@@ -66,8 +84,13 @@ contract ReputationSystem {
     }
 
     struct Project {
-        mapping(uint => bytes32) nonceToPollId;
         uint pollNonce;
+        bytes32 oldestPollId;
+        bytes32 latestPollId;
+        uint lastUpdatedBlockSegment;
+        uint latestPollEndBlock;
+        mapping(uint => bytes32) nonceToLatestPollId;
+        mapping(uint => bytes32) nonceToOldestPollId;
     }
 
     struct PollRequest {
@@ -87,7 +110,25 @@ contract ReputationSystem {
         uint pseudoPrice;
         bool priceGteOne;
         address tokenAddress;
+        bytes32[] contextTypes;
     }
+
+    struct Poll {
+        // the assigned votes for voter
+        uint totalVotes;
+
+        // voter address => (contextType => votes)
+        // choice can be hashed value of voting options
+        // e.g. sha3("choice #1"), sha3("choice #2")
+        mapping (address => mapping(bytes32 => uint)) votesForContextType;
+
+        // choice => votes
+        mapping (bytes32 => uint) totalVotesForContextType;
+
+        // voter address => (context type => available votes));
+        mapping (address => mapping(bytes32 => uint)) availableVotesForContextType;
+    }
+
 
     // The global reputation system's id
     bytes32 globalReputationsSystemID;
@@ -95,16 +136,29 @@ contract ReputationSystem {
     // reputation system id => reputation struct
     mapping(bytes32 => Reputation) reputations;
 
-    mapping(bytes32 => Project) idToProject;
+    mapping(bytes32 => Project) public idToProject;
 
-    mapping(bytes32 => PollRequest) pollRequests;
+    mapping(bytes32 => PollRequest) public pollRequests;
 
-    CarbonVoteX public carbon;
+    // pollId => Poll struct
+    mapping (bytes32 => Poll) polls;
+
+    CarbonVoteXCore public carbonVoteXCore;
+
+    bytes32 public namespace;
+
+    // updateInterval for vote
+    uint private updateInterval;
+
+    uint private prevVotesDiscount;
+
+    uint private newVotesDiscount;
+
 
     // modifiers
     modifier onlyNonGlobalReputationsSystemID(bytes32 _reputationsSystemID) {
         require(
-            _reputationsSystemID == globalReputationsSystemID,
+            _reputationsSystemID != globalReputationsSystemID,
             "Only Non-global Reputations System ID can be accepted."
         );
         _;
@@ -112,17 +166,151 @@ contract ReputationSystem {
 
     /**
     * constructor for ReputationSystem
-    *
-    * @param _carbonVoteX the address of a CarbonVoteX
+
+    * @param _carbonVoteXCore the address of a carbonVoteXCore
+    * @param _namespace the namespace of this CarbonVoteX receiver
+    * @param _updateInterval the update interval for vote
+    * @param _prevVotesDiscount the discount factor for previous votes
+    * @param _newVotesDiscount the discount factor for new votes
     */
-    constructor(address _carbonVoteX) public {
-        carbon = CarbonVoteX(_carbonVoteX);
+    constructor(
+        address _carbonVoteXCore,
+        bytes32 _namespace,
+        uint _updateInterval,
+        uint _prevVotesDiscount,
+        uint _newVotesDiscount
+    )
+        public
+    {
+        carbonVoteXCore = CarbonVoteXCore(_carbonVoteXCore);
+        namespace = _namespace;
+        updateInterval = _updateInterval;
+        prevVotesDiscount = _prevVotesDiscount;
+        newVotesDiscount = _newVotesDiscount;
         globalReputationsSystemID = keccak256(address(this));
     }
 
     /**
+     * Gets the amount of gas remaining for voter
+     *
+     * @param pollId UUID (hash value) of a poll
+     * @param voter address of a voter
+     */
+    function getGasSent(bytes32 pollId, address voter) external view returns (uint) {
+        return carbonVoteXCore.getGasSent(namespace, pollId, voter);
+    }
+
+    /**
+    * Gets votes of context type available for a voter.
+    *
+    * @param pollId UUID (hash value) of a poll
+    * @param voter address of a voter
+    * @param contextType contextType the context type the voter voted for
+    */
+    function readAvailableVotesForContextType(bytes32 pollId, address voter, bytes32 contextType)
+        external
+        view
+        returns (uint)
+    {
+        require(pollExist(pollId));
+        return polls[pollId].availableVotesForContextType[voter][contextType];
+    }
+
+    /**
+    * Set votes available to voter.
+    * Voters have the same number of votes for each reputation context.
+    * It only can be called by master address of carbonVoteXCore
+    *
+    * @param pollId UUID (hash value) of a poll
+    * @param voter address of a voter
+    * @param votes number of votes to write
+    */
+    function writeAvailableVotes(bytes32 pollId, address voter, uint votes) external {
+        require (msg.sender == address(carbonVoteXCore));
+
+        polls[pollId].totalVotes = votes;
+        bytes32[] storage contextTypes = pollRequests[pollId].contextTypes;
+        for (uint i = 0; i < contextTypes.length; i++){
+            polls[pollId].availableVotesForContextType[voter][contextTypes[i]] = votes;
+        }
+    }
+
+    /**
+    * Returns whether a voter has already obtained votes.
+    *
+    * @param pollId UUID (hash value) of a poll
+    * @param voter address of a voter
+    */
+    function voteObtained(bytes32 pollId, address voter) external view returns (bool) {
+        return carbonVoteXCore.voteObtained(namespace, pollId, voter);
+    }
+
+    /**
+    * Returns the numbers of effective votes and total pending votes for members
+    *
+    * @param id the id of the reputation system (either global or non-global)
+    * @param member the address of a member
+    * @param contextType the context type of the reputation vector
+    */
+    function getVotesForMember(bytes32 id, address member, bytes32 contextType)
+        external
+        view
+        returns (uint, uint)
+    {
+        uint votes = reputations[id].repVec[member][contextType].votes;
+        uint totalPendingVotes = reputations[id].repVec[member][contextType].totalPendingVotes;
+        return (votes, totalPendingVotes);
+    }
+
+    /**
+    * Returns the voting result for context type.
+    * It is typically called by other contracts
+    *
+    * @param pollId the id of the poll to request, generated using
+    *     keccak256(projectNameHash, milestoneNameHash)
+    * @param contextType the context type the voter voted for
+    */
+    function getVotingResultForContextType(
+        bytes32 pollId,
+        bytes32 contextType
+    )
+        external
+        view
+        returns (uint)
+    {
+        //Check if poll exists
+        require(pollExist(pollId));
+
+        return polls[pollId].totalVotesForContextType[contextType];
+    }
+
+
+    /**
+    * Returns the voting result for context type by a voter.
+    * It is typically called by other contracts
+    *
+    * @param pollId the id of the poll to request, generated using
+    *     keccak256(projectNameHash, milestoneNameHash)
+    * @param voter the address of a voter
+    * @param contextType the context type the voter voted for
+    */
+    function getVotingResultForContextTypeByVoter(
+        bytes32 pollId,
+        address voter,
+        bytes32 contextType
+    )
+        external
+        view
+        returns (uint)
+    {
+        //Check if poll exists
+        require(pollExist(pollId));
+
+        return polls[pollId].votesForContextType[voter][contextType];
+    }
+
+    /**
     * Registers a poll request for a milestone for a project
-    * Any address can then start a proxy voting with CarbonVoteX with [pollId],
     * providing the initiation time is within [minStartTime, maxStartTime]
     *
     * Only accessible to specific addresses
@@ -139,6 +327,7 @@ contract ReputationSystem {
     * @param pseudoPrice see the definition in PollRequest
     * @param priceGteOne see the definition in PollRequest
     * @param tokenAddress the token address used for votes
+    * @param contextTypes the context types used for votes
     */
     function registerPollRequest(
         bytes32 pollId,
@@ -146,17 +335,23 @@ contract ReputationSystem {
         uint maxStartTime,
         uint pseudoPrice,
         bool priceGteOne,
-        address tokenAddress
+        address tokenAddress,
+        bytes32[] contextTypes
     )
         public
     {
-        require(pollRequests[pollId].minStartTime == 0 && pollRequests[pollId].maxStartTime == 0);
+        require(
+            pollRequests[pollId].minStartTime == 0 &&
+            pollRequests[pollId].maxStartTime == 0,
+            "can not register twice"
+        );
         pollRequests[pollId] = PollRequest({
             minStartTime: minStartTime,
             maxStartTime: maxStartTime,
             pseudoPrice: pseudoPrice,
             priceGteOne: priceGteOne,
-            tokenAddress: tokenAddress
+            tokenAddress: tokenAddress,
+            contextTypes: contextTypes
         });
 
         emit PollRequestRegistered(
@@ -166,7 +361,8 @@ contract ReputationSystem {
             maxStartTime,
             pseudoPrice,
             priceGteOne,
-            tokenAddress
+            tokenAddress,
+            contextTypes
         );
     }
 
@@ -188,6 +384,7 @@ contract ReputationSystem {
     * @param pseudoPrice see the definition in PollRequest
     * @param priceGteOne see the definition in PollRequest
     * @param tokenAddress the token address used for votes
+    * @param contextTypes the context types used for votes
     */
     function modifyPollRequest(
         bytes32 pollId,
@@ -195,17 +392,22 @@ contract ReputationSystem {
         uint maxStartTime,
         uint pseudoPrice,
         bool priceGteOne,
-        address tokenAddress
+        address tokenAddress,
+        bytes32[] contextTypes
     )
         public
     {
-        require(pollRequests[pollId].minStartTime != 0 && pollRequests[pollId].maxStartTime != 0);
+        require(
+            pollRequests[pollId].minStartTime != 0 &&
+            pollRequests[pollId].maxStartTime != 0,
+            "poll has to be registered before modification");
         pollRequests[pollId] = PollRequest({
             minStartTime: minStartTime,
             maxStartTime: maxStartTime,
             pseudoPrice: pseudoPrice,
             priceGteOne: priceGteOne,
-            tokenAddress: tokenAddress
+            tokenAddress: tokenAddress,
+            contextTypes: contextTypes
         });
 
         emit PollRequestModified(
@@ -215,12 +417,13 @@ contract ReputationSystem {
             maxStartTime,
             pseudoPrice,
             priceGteOne,
-            tokenAddress
+            tokenAddress,
+            contextTypes
         );
     }
 
     /**
-    * Start a poll by any address
+    * Start a poll by any address.
     *
     * @param id the id of the reputation system
     *   id cannot be the global reputation system's id
@@ -234,13 +437,46 @@ contract ReputationSystem {
         // for testing only
         uint startBlock = block.number + 20;
         uint endBlock = startBlock + 20;
-        carbon.register(startBlock, endBlock, pollId, pollRequests[pollId].tokenAddress);
+        carbonVoteXCore.register(
+            namespace,
+            startBlock,
+            endBlock,
+            pollId,
+            pollRequests[pollId].tokenAddress);
 
         idToProject[id].pollNonce += 1;
         uint pollNonce = idToProject[id].pollNonce;
-        idToProject[id].nonceToPollId[pollNonce] = pollId;
+        idToProject[id].nonceToLatestPollId[pollNonce] = pollId;
+        idToProject[id].nonceToOldestPollId[pollNonce] = pollId;
 
         emit PollStarted(msg.sender, id, pollId);
+    }
+
+    /**
+    * Reset the update interval
+    *
+    * @param _updateInterval the update interval for vote
+    */
+    function resetUpdateInterval(uint _updateInterval) public {
+        require(msg.sender == address(this));
+        updateInterval = _updateInterval;
+        emit UpdateIntervalReset(_updateInterval);
+    }
+
+    /**
+    * Reset discount factors for vote updating.
+    * The factor is the percentages out of 100.
+    * e.g. if the factor value is 90, it represent 90% (i.e. 0.9)
+    *
+    * @param _prevVotesDiscount the discount factor for previous votes
+    * @param _newVotesDiscount the discount factor for new votes
+    */
+    function resetVotesDiscountFactors(uint _prevVotesDiscount, uint _newVotesDiscount) public {
+        require(msg.sender == address(this));
+        prevVotesDiscount = _prevVotesDiscount;
+        newVotesDiscount = _newVotesDiscount;
+
+        emit VotesDiscountFactorsReset(_prevVotesDiscount, _newVotesDiscount);
     }
 
     /**
@@ -253,7 +489,7 @@ contract ReputationSystem {
     * @param pollId the id of the poll, from which we delegate votes
     * @param votesInWei the number of Wei to delegate
     */
-    function delegate(
+    function vote(
         bytes32 id,
         address member,
         bytes32 contextType,
@@ -263,15 +499,30 @@ contract ReputationSystem {
         public
         onlyNonGlobalReputationsSystemID(id)
     {
-        // First convert votes in wei to votes in project's token's basic unit
+        // poll must exits and not yet expired.
+        require(pollExist(pollId) && !pollExpired(pollId));
+
+        // convert votes in wei to votes in project's token's basic unit
         uint votes = convertVotes(
             votesInWei,
             pollRequests[pollId].pseudoPrice,
             pollRequests[pollId].priceGteOne
         );
 
-        // This basically checks if the member has enough votes
-        carbon.voteFor(pollId, member, contextType, votes);
+        // voter cannot vote more votes than it has for contextType.
+        require(
+            polls[pollId].availableVotesForContextType[msg.sender][contextType] >= votes
+        );
+
+        // deduct voter's available votes from.
+        polls[pollId].availableVotesForContextType[msg.sender][contextType] -= votes;
+
+        // place votes to voter's choice for contextType.
+        polls[pollId].votesForContextType[msg.sender][contextType] += votes;
+
+        // place votes to totalVotesByChoice;
+        polls[pollId].totalVotesForContextType[contextType] += votes;
+
 
         // record voting results, here we use votes in wei as our standard unit
         // across projects
@@ -284,49 +535,154 @@ contract ReputationSystem {
         // update global reputation
         uint startBlock;
         uint endBlock;
-        (startBlock, endBlock,) = carbon.getPoll(pollId);
+        (startBlock, endBlock,) = getPoll(pollId);
 
         Context storage globalContext = reputations[globalReputationsSystemID]
             .repVec[member][contextType];
 
-        if(startBlock >= globalContext.oldestPollStartBlock + 100) {
+        if((idToProject[globalReputationsSystemID].pollNonce == 0) ||
+            (idToProject[globalReputationsSystemID].lastUpdatedBlockSegment < startBlock / updateInterval)) {
+            idToProject[globalReputationsSystemID].lastUpdatedBlockSegment = startBlock / updateInterval;
+            idToProject[globalReputationsSystemID].oldestPollId = pollId;
             idToProject[globalReputationsSystemID].pollNonce += 1;
-            globalContext.oldestPollStartBlock = startBlock;
-            globalContext.oldestPollId = pollId;
         }
 
-        if (endBlock > globalContext.latestPollEndBlock) {
-            globalContext.latestPollEndBlock = endBlock;
-            globalContext.latestPollId = pollId;
+        if (endBlock > idToProject[globalReputationsSystemID].latestPollEndBlock) {
+            idToProject[globalReputationsSystemID].latestPollEndBlock = endBlock;
+            idToProject[globalReputationsSystemID].latestPollId = pollId;
         }
 
         // add votes to the oldest poll available
-        globalContext.pendingVotes[globalContext.oldestPollId] += votes;
+        globalContext
+            .pendingVotes[idToProject[globalReputationsSystemID].oldestPollId] += votesInWei;
         globalContext.totalPendingVotes += votesInWei;
 
-        // globalNonce is always mapped to the latest pollId
-        uint globalNonce = idToProject[globalReputationsSystemID].pollNonce;
-        idToProject[globalReputationsSystemID]
-            .nonceToPollId[globalNonce] = globalContext.latestPollId;
 
-        emit VotesDelegated(msg.sender, id, member, contextType, pollId, votesInWei);
+        idToProject[globalReputationsSystemID]
+            .nonceToLatestPollId[idToProject[globalReputationsSystemID].pollNonce] =
+                idToProject[globalReputationsSystemID].latestPollId;
+
+        idToProject[globalReputationsSystemID]
+            .nonceToOldestPollId[idToProject[globalReputationsSystemID].pollNonce] =
+                idToProject[globalReputationsSystemID].oldestPollId;
+
+        emit Voted(
+            msg.sender,
+            id,
+            member,
+            contextType,
+            pollId,
+            votesInWei,
+            idToProject[globalReputationsSystemID].pollNonce
+        );
     }
 
     /**
-    * Returns the numbers of effective votes and total pending votes
+    * Updates a context type of a reputation vector
+    *
+    * Principals have to update their reputation vectors if somebody has
+    *     delegated votes to them
     *
     * @param id the id of the reputation system (either global or non-global)
     * @param member the address of a member
     * @param contextType the context type of the reputation vector
+    * @param expirationCheck whether to check poll expires
     */
-    function getVotes(bytes32 id, address member, bytes32 contextType)
+    function updateRepVecContext(
+        bytes32 id,
+        address member,
+        bytes32 contextType,
+        bool expirationCheck
+    )
         public
-        view
-        returns (uint, uint)
     {
-        uint votes = reputations[id].repVec[member][contextType].votes;
-        uint totalPendingVotes = reputations[id].repVec[member][contextType].totalPendingVotes;
-        return (votes, totalPendingVotes);
+        Context storage context = reputations[id].repVec[member][contextType];
+        uint pollNonce = idToProject[id].pollNonce;
+        uint lastUpdated = context.lastUpdated;
+        if (pollNonce > 100 + lastUpdated) {
+            // we only update the most recent 100 proxy votings
+            // this avoids potential out-of-gas errors
+            lastUpdated = pollNonce - 100;
+            context.votes = 0;
+            context.totalPendingVotes = 0;
+        }
+
+        // update votes from the oldest proxy voting to the latest proxy voting
+        for (uint i = lastUpdated + 1; i <= pollNonce; i++) {
+            bytes32 latestPollId = idToProject[id].nonceToLatestPollId[i];
+            bytes32 oldestPollId = idToProject[id].nonceToOldestPollId[i];
+            if ((!expirationCheck) || (expirationCheck && pollExpired(latestPollId))) {
+                uint pendingVotes = context.pendingVotes[oldestPollId];
+                if (pollNonce == 1) {
+                    context.votes =  pendingVotes;
+                } else {
+                    context.votes =
+                        (context.votes * prevVotesDiscount + pendingVotes * newVotesDiscount) / 100;
+                }
+
+                context.lastUpdated = i;
+                context.updatedBlockNumber = block.number;
+                if (context.totalPendingVotes >= pendingVotes) {
+                    context.totalPendingVotes -= pendingVotes;
+                }
+                context.pendingVotes[oldestPollId] = 0;
+            }
+        }
+
+        if (id == globalReputationsSystemID) {
+            emit GlobalRepVecContextUpdated(
+                msg.sender,
+                member,
+                contextType,
+                lastUpdated + 1,
+                pollNonce
+            );
+        } else {
+            emit RepVecContextUpdated(
+                msg.sender,
+                id,
+                member,
+                contextType,
+                lastUpdated + 1,
+                pollNonce
+            );
+        }
+    }
+
+    /**
+    * Updates reputation vectors for a batch of context types
+    *
+    * Principals have to update their reputation vectors if somebody has
+    *     delegated votes to them
+    *
+    * @param id the id of the reputation system (either global or non-global)
+    * @param member the address of a member
+    * @param contextTypes the context type of the reputation vector
+    * @param enableGlobalUpdate enable updates for global reputation vectors
+    * @param expirationCheck whether to check poll expires
+    */
+    function batchUpdateRepVecContext(
+        bytes32 id,
+        address member,
+        bytes32[] contextTypes,
+        bool enableGlobalUpdate,
+        bool expirationCheck
+    )
+        public
+    {
+        for (uint i = 0; i < contextTypes.length; i++) {
+            updateRepVecContext(id, member, contextTypes[i], expirationCheck);
+            if (enableGlobalUpdate) {
+                updateRepVecContext(
+                    globalReputationsSystemID,
+                    member,
+                    contextTypes[i],
+                    expirationCheck
+                );
+            }
+        }
+
+        emit RepVecContextBatchUpdated(msg.sender, id, member, contextTypes);
     }
 
     /**
@@ -345,75 +701,46 @@ contract ReputationSystem {
         return context.totalPendingVotes != 0;
     }
 
-    /**
-    * Updates a context type of a reputation vector
-    *
-    * Principals have to update their reputation vectors if somebody has
-    *     delegated votes to them
-    *
-    * @param id the id of the reputation system (either global or non-global)
-    * @param member the address of a member
-    * @param contextType the context type of the reputation vector
-    */
-    function updateRepVecContext(bytes32 id, address member, bytes32 contextType) public {
-        Context storage context = reputations[id].repVec[member][contextType];
-        uint pollNonce = idToProject[id].pollNonce;
-        uint lastUpdated = context.lastUpdated;
-        if (pollNonce > 100 + lastUpdated) {
-            // we only update the most recent 100 proxy votings
-            // this avoids potential out-of-gas errors
-            lastUpdated = pollNonce - 100;
-            context.votes = 0;
-            context.totalPendingVotes = 0;
-        }
-
-        // update votes from the oldest proxy voting to the latest proxy voting
-        for (uint i = lastUpdated + 1; i <= pollNonce; i++) {
-            bytes32 pollId = idToProject[id].nonceToPollId[i];
-            if (carbon.pollExpired(pollId)) {
-                uint pendingVotes = context.pendingVotes[pollId];
-                context.votes = (context.votes * 9 + pendingVotes) / 10;
-                context.lastUpdated = i;
-                context.updatedTimestamp = now;
-                if (context.totalPendingVotes >= pendingVotes) {
-                    context.totalPendingVotes -= pendingVotes;
-                }
-                context.pendingVotes[pollId] = 0;
-              }
-        }
-
-        emit RepVecContextUpdated(msg.sender, id, member, contextType, lastUpdated + 1, pollNonce);
-    }
-
 
     /**
-    * Updates reputation vectors for a batch of context types
+    * Checks if a poll exits
     *
-    * Principals have to update their reputation vectors if somebody has
-    *     delegated votes to them
-    *
-    * @param id the id of the reputation system (either global or non-global)
-    * @param member the address of a member
-    * @param contextTypes the context type of the reputation vector
-    * @param enableGlobalUpdate enable updates for global reputation vectors
+    * @param pollId the id of the poll to start, generated using
+    *     keccak256(projectNameHash, milestoneNameHash)
     */
-    function batchUpdateRepVecContext(
-        bytes32 id,
-        address member,
-        bytes32[] contextTypes,
-        bool enableGlobalUpdate
-    )
-        public
-    {
-        for (uint i = 0; i < contextTypes.length; i++) {
-            updateRepVecContext(id, member, contextTypes[i]);
-            if (enableGlobalUpdate) {
-                updateRepVecContext(globalReputationsSystemID, member, contextTypes[i]);
-            }
-        }
-
-        emit RepVecContextBatchUpdated(msg.sender, id, member, contextTypes);
+    function pollExist(bytes32 pollId) public view returns (bool) {
+        return carbonVoteXCore.pollExist(namespace, pollId);
     }
+
+    /**
+    * Checks if a poll has expired
+    *
+    * @param pollId the id of the poll to start, generated using
+    *     keccak256(projectNameHash, milestoneNameHash)
+    */
+    function pollExpired(bytes32 pollId) public view returns (bool) {
+        // Check if poll exists
+        require(pollExist(pollId));
+
+        return carbonVoteXCore.pollExpired(namespace, pollId);
+    }
+
+    /**
+    * Returns the namespace of this CarbonVoteReceiver.
+    */
+    function getNamespace() external view returns (bytes32){
+        return namespace;
+    }
+
+    /**
+     * Gets the startBlock, endBlock, pollId and token address of the poll.
+     *
+     * @param pollId UUID (hash value) of a poll
+     */
+    function getPoll(bytes32 pollId) public view returns (uint, uint, bytes32, address) {
+        return carbonVoteXCore.getPoll(namespace, pollId);
+    }
+
 
     /**
     * Returns votes in project's token's basic unit
