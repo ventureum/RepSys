@@ -36,12 +36,8 @@ contract('ReputationSystem', accounts => {
         await carbonVoteXCore.setReceiver(
             web3.utils.sha3(NAMESPACE_REPUTATION_SYSTEM),
             reputationSystemAddress,
-            {from: ROOT_ACCOUNT});
-
-        // gain auth from carbonVoteXCore to register poll
-        await carbonVoteXCore.setPermissions(
             [web3.utils.sha3("register")],
-            [reputationSystemAddress]);
+            {from: ROOT_ACCOUNT});
     });
 
     it("should contain the same carbonVoteXCore " +
@@ -229,12 +225,9 @@ contract('ReputationSystem', accounts => {
         );
 
         // remove auth to register poll
-        let register = await carbonVoteXCore.functionSig.call(
-            web3.utils.sha3("register"));
-        await carbonVoteXCore.forbid(
-            reputationSystemAddress,
-            carbonVoteXCoreAddress,
-            register);
+        await carbonVoteXCore.cancelPermissions(
+            [web3.utils.sha3("register")],
+            [reputationSystemAddress]);
 
         try {
             await reputationSystem.startPoll(
