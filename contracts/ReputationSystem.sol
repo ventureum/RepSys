@@ -4,9 +4,10 @@ import "carbonvotex/contracts/CarbonVoteXCore.sol";
 import "carbonvotex/contracts/ICarbonVoteXReceiver.sol";
 import "openzeppelin-solidity/contracts/token/ERC20/ERC20.sol";
 import "openzeppelin-solidity/contracts/math/SafeMath.sol";
+import "openzeppelin-solidity/contracts/ownership/Ownable.sol";
 
 
-contract ReputationSystem is ICarbonVoteXReceiver {
+contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     // apply SafeMath to uint
     using SafeMath for uint;
 
@@ -160,6 +161,7 @@ contract ReputationSystem is ICarbonVoteXReceiver {
 
     uint private newVotesDiscount;
 
+    address private addressCanRegister;
 
     // modifiers
     modifier onlyNonGlobalReputationsSystemID(bytes32 _reputationsSystemID) {
@@ -169,7 +171,6 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         );
         _;
     }
-
 
     /**
     * constructor for ReputationSystem
@@ -185,7 +186,8 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         bytes32 _namespace,
         uint _updateInterval,
         uint _prevVotesDiscount,
-        uint _newVotesDiscount
+        uint _newVotesDiscount,
+        address _addressCanRegister
     )
         public
     {
@@ -195,6 +197,7 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         prevVotesDiscount = _prevVotesDiscount;
         newVotesDiscount = _newVotesDiscount;
         globalReputationsSystemID = keccak256(address(this));
+        addressCanRegister = _addressCanRegister;
     }
 
     /**
@@ -230,6 +233,13 @@ contract ReputationSystem is ICarbonVoteXReceiver {
         for (uint i = 0; i < contextTypes.length; i++){
             polls[pollId].availableVotesForContextType[voter][contextTypes[i]] = votes;
         }
+    }
+
+    function setAddressCanRegister (address _addressCanRegister) 
+        external 
+        onlyOwner 
+    {
+        addressCanRegister = _addressCanRegister;
     }
 
     /**
@@ -331,7 +341,7 @@ contract ReputationSystem is ICarbonVoteXReceiver {
     * @param tokenAddress the token address used for votes
     * @param contextTypes the context types used for votes
     */
-    function registerPollRequest(
+    function registerPollRequest (
         bytes32 pollId,
         uint minStartTime,
         uint maxStartTime,
@@ -342,6 +352,7 @@ contract ReputationSystem is ICarbonVoteXReceiver {
     )
         public
     {
+        require(msg.sender == addressCanRegister);
         require(
             pollRequests[pollId].minStartTime == 0 &&
             pollRequests[pollId].maxStartTime == 0,
