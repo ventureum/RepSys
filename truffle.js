@@ -1,5 +1,9 @@
-var HDWalletProvider = require('truffle-hdwallet-provider')
-var mnemonic = 'effort gospel broken fatigue taste mountain rule uncover radio caught metal nation'
+const HDWalletProvider = require('truffle-hdwallet-provider')
+let mnemonic = ''
+
+if (fs.existsSync('mnemonic.txt')) {
+  mnemonic = fs.readFileSync("mnemonic.txt").toString().split('\n')[0]
+}
 
 module.exports = {
   networks: {
