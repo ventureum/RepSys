@@ -350,7 +350,7 @@ contract('ReputationSystem', accounts => {
 
     // check project-specific reputation
     let votesForContextOneAndMemeberOne =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         projectId, MEMBER_ACCOUNT_ONE, CONTEXT_TYPE_ONE)
     assert.equal(
       votesForContextOneAndMemeberOne[0].toNumber(), 0)
@@ -359,7 +359,7 @@ contract('ReputationSystem', accounts => {
       votesInWeiForContextTypeOneAndMemberOne)
 
     let votesForContextOneAndMemeberTwo =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         projectId, MEMBER_ACCOUNT_TWO, CONTEXT_TYPE_ONE)
     assert.equal(
       votesForContextOneAndMemeberTwo[0].toNumber(), 0)
@@ -368,7 +368,7 @@ contract('ReputationSystem', accounts => {
       votesInWeiForContextTypeOneAndMemberTwo)
 
     let votesForContextTwoAndMemeberOne =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         projectId, MEMBER_ACCOUNT_ONE, CONTEXT_TYPE_TWO)
     assert.equal(
       votesForContextTwoAndMemeberOne[0].toNumber(), 0)
@@ -377,7 +377,7 @@ contract('ReputationSystem', accounts => {
       votesInWeiForContextTypeTwoAndMemberOne)
 
     let votesForContextTwoAndMemeberTwo =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         projectId, MEMBER_ACCOUNT_TWO, CONTEXT_TYPE_TWO)
     assert.equal(
       votesForContextTwoAndMemeberTwo[0].toNumber(), 0)
@@ -390,7 +390,7 @@ contract('ReputationSystem', accounts => {
             web3.utils.sha3(reputationSystem.address)
 
     let globalVotesForContextOneAndMemeberOne =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         globalReputationsSystemID, MEMBER_ACCOUNT_ONE, CONTEXT_TYPE_ONE)
     assert.equal(
       globalVotesForContextOneAndMemeberOne[0].toNumber(), 0)
@@ -399,7 +399,7 @@ contract('ReputationSystem', accounts => {
       votesInWeiForContextTypeOneAndMemberOne)
 
     let globalVotesForContextOneAndMemeberTwo =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         globalReputationsSystemID, MEMBER_ACCOUNT_TWO, CONTEXT_TYPE_ONE)
     assert.equal(
       globalVotesForContextOneAndMemeberTwo[0].toNumber(), 0)
@@ -408,7 +408,7 @@ contract('ReputationSystem', accounts => {
       votesInWeiForContextTypeOneAndMemberTwo)
 
     let globalVotesForContextTwoAndMemeberOne =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         globalReputationsSystemID, MEMBER_ACCOUNT_ONE, CONTEXT_TYPE_TWO)
     assert.equal(
       globalVotesForContextTwoAndMemeberOne[0].toNumber(), 0)
@@ -417,7 +417,7 @@ contract('ReputationSystem', accounts => {
       votesInWeiForContextTypeTwoAndMemberOne)
 
     let globalVotesForContextTwoAndMemeberTwo =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         globalReputationsSystemID, MEMBER_ACCOUNT_TWO, CONTEXT_TYPE_TWO)
     assert.equal(
       globalVotesForContextTwoAndMemeberTwo[0].toNumber(), 0)
@@ -510,47 +510,63 @@ contract('ReputationSystem', accounts => {
 
     // check project-specific reputation
     let votesForContextOneAndMemeberThree =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         projectId, MEMBER_ACCOUNT_THREE, CONTEXT_TYPE_ONE)
     assert.equal(
       votesForContextOneAndMemeberThree[0].toNumber(),
       votesInWeiForContextTypeOneAndMemberThree)
     assert.equal(
       votesForContextOneAndMemeberThree[1].toNumber(), 0)
+    assert.equal(
+      await reputationSystem.getVotingResultForMember.call(
+        pollId, MEMBER_ACCOUNT_THREE, CONTEXT_TYPE_ONE),
+      votesInWeiForContextTypeOneAndMemberThree)
 
     let votesForContextOneAndMemeberFour =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         projectId, MEMBER_ACCOUNT_FOUR, CONTEXT_TYPE_ONE)
     assert.equal(
       votesForContextOneAndMemeberFour[0].toNumber(),
       votesInWeiForContextTypeOneAndMemberFour)
     assert.equal(
       votesForContextOneAndMemeberFour[1].toNumber(), 0)
+    assert.equal(
+      await reputationSystem.getVotingResultForMember.call(
+        pollId, MEMBER_ACCOUNT_FOUR, CONTEXT_TYPE_ONE),
+      votesInWeiForContextTypeOneAndMemberFour)
 
     let votesForContextTwoAndMemeberThree =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         projectId, MEMBER_ACCOUNT_THREE, CONTEXT_TYPE_TWO)
     assert.equal(
       votesForContextTwoAndMemeberThree[0].toNumber(),
       votesInWeiForContextTypeTwoAndMemberThree)
     assert.equal(
       votesForContextTwoAndMemeberThree[1].toNumber(), 0)
+    assert.equal(
+      await reputationSystem.getVotingResultForMember.call(
+        pollId, MEMBER_ACCOUNT_THREE, CONTEXT_TYPE_TWO),
+      votesInWeiForContextTypeTwoAndMemberThree)
 
     let votesForContextTwoAndMemeberFour =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         projectId, MEMBER_ACCOUNT_FOUR, CONTEXT_TYPE_TWO)
     assert.equal(
       votesForContextTwoAndMemeberFour[0].toNumber(),
       votesInWeiForContextTypeTwoAndMemberFour)
     assert.equal(
       votesForContextTwoAndMemeberFour[1].toNumber(), 0)
+    assert.equal(
+      await reputationSystem.getVotingResultForMember.call(
+        pollId, MEMBER_ACCOUNT_FOUR, CONTEXT_TYPE_TWO),
+      votesInWeiForContextTypeTwoAndMemberFour)
 
     // check global reputation
     let globalReputationsSystemID =
             web3.utils.sha3(reputationSystem.address)
 
     let globalVotesForContextOneAndMemeberThree =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         globalReputationsSystemID, MEMBER_ACCOUNT_THREE, CONTEXT_TYPE_ONE)
     assert.equal(
       globalVotesForContextOneAndMemeberThree[0].toNumber(),
@@ -559,7 +575,7 @@ contract('ReputationSystem', accounts => {
       globalVotesForContextOneAndMemeberThree[1].toNumber(), 0)
 
     let globalVotesForContextOneAndMemeberFour =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         globalReputationsSystemID, MEMBER_ACCOUNT_FOUR, CONTEXT_TYPE_ONE)
     assert.equal(
       globalVotesForContextOneAndMemeberFour[0].toNumber(),
@@ -568,7 +584,7 @@ contract('ReputationSystem', accounts => {
       globalVotesForContextOneAndMemeberFour[1].toNumber(), 0)
 
     let globalVotesForContextTwoAndMemeberThree =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         globalReputationsSystemID, MEMBER_ACCOUNT_THREE, CONTEXT_TYPE_TWO)
     assert.equal(
       globalVotesForContextTwoAndMemeberThree[0].toNumber(),
@@ -577,7 +593,7 @@ contract('ReputationSystem', accounts => {
       globalVotesForContextTwoAndMemeberThree[1].toNumber(), 0)
 
     let globalVotesForContextTwoAndMemeberFour =
-            await reputationSystem.getVotesForMember.call(
+      await reputationSystem.getVotesInWeiForMember.call(
         globalReputationsSystemID, MEMBER_ACCOUNT_FOUR, CONTEXT_TYPE_TWO)
     assert.equal(
       globalVotesForContextTwoAndMemeberFour[0].toNumber(),

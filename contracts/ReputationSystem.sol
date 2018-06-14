@@ -129,6 +129,11 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         // e.g. sha3("choice #1"), sha3("choice #2")
         mapping (address => mapping(bytes32 => uint)) votesForContextType;
 
+        // member address => (contextType => votes)
+        // choice can be hashed value of voting options
+        // e.g. sha3("choice #1"), sha3("choice #2")
+        mapping (address => mapping(bytes32 => uint)) votesForMember;
+
         // choice => votes
         mapping (bytes32 => uint) totalVotesForContextType;
 
@@ -196,7 +201,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         updateInterval = _updateInterval;
         prevVotesDiscount = _prevVotesDiscount;
         newVotesDiscount = _newVotesDiscount;
-        globalReputationsSystemID = keccak256(address(this));
+        globalReputationsSystemID = keccak256(abi.encodePacked(abi.encodePacked(address(this))));
         addressCanRegister = _addressCanRegister;
     }
 
@@ -264,7 +269,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     * @param member the address of a member
     * @param contextType the context type of the reputation vector
     */
-    function getVotesForMember(bytes32 id, address member, bytes32 contextType)
+    function getVotesInWeiForMember(bytes32 id, address member, bytes32 contextType)
         external
         view
         returns (uint, uint)
@@ -275,11 +280,28 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     }
 
     /**
+    * Returns votes of context type for a member in a poll
+    *
+    * @param pollId the id of the poll to request, generated using
+    *     keccak256(abi.encodePacked(projectNameHash, milestoneNameHash))
+    * @param member the address of a member
+    * @param contextType the context type of the reputation vector
+    */
+    function getVotingResultForMember(bytes32 pollId, address member, bytes32 contextType)
+        external
+        view
+        returns (uint)
+    {
+        require(pollExist(pollId));
+        return polls[pollId].votesForMember[member][contextType];
+    }
+
+    /**
     * Returns the voting result for context type.
     * It is typically called by other contracts
     *
     * @param pollId the id of the poll to request, generated using
-    *     keccak256(projectNameHash, milestoneNameHash)
+    *     keccak256(abi.encodePacked(projectNameHash, milestoneNameHash))
     * @param contextType the context type the voter voted for
     */
     function getVotingResultForContextType(
@@ -302,7 +324,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     * It is typically called by other contracts
     *
     * @param pollId the id of the poll to request, generated using
-    *     keccak256(projectNameHash, milestoneNameHash)
+    *     keccak256(abi.encodePacked(projectNameHash, milestoneNameHash))
     * @param voter the address of a voter
     * @param contextType the context type the voter voted for
     */
@@ -331,7 +353,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     * project deploys milestones
     *
     * @param pollId the id of the poll to request, generated using
-    *     keccak256(projectNameHash, milestoneNameHash)
+    *     keccak256(abi.encodePacked(projectNameHash, milestoneNameHash))
     * @param minStartTime the minimum starting time (unix timestamp)
     *     to start a poll (by calling carbon.register())
     * @param maxStartTime the maximum starting time (unix timestamp)
@@ -389,7 +411,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     * a milestone's starting time and/or deadline is modified
 
     * @param pollId the id of the poll to request, generated using
-    *     keccak256(projectNameHash, milestoneNameHash)
+    *     keccak256(abi.encodePacked(projectNameHash, milestoneNameHash))
     * @param minStartTime the minimum starting time (unix timestamp)
     *     to start a poll (by calling carbon.register())
     * @param maxStartTime the maximum starting time (unix timestamp)
@@ -441,7 +463,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     * @param id the id of the reputation system
     *   id cannot be the global reputation system's id
     * @param pollId the id of the poll to start, generated using
-    *     keccak256(projectNameHash, milestoneNameHash)
+    *     keccak256(abi.encodePacked(projectNameHash, milestoneNameHash))
     */
     function startPoll(bytes32 id, bytes32 pollId) public onlyNonGlobalReputationsSystemID(id) {
         require(validatePollRequest(pollId));
@@ -535,6 +557,10 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         polls[pollId].votesForContextType[msg.sender][contextType] =
             polls[pollId].votesForContextType[msg.sender][contextType].add(votes);
 
+        // place votes to member votes for contextType.
+        polls[pollId].votesForMember[member][contextType] =
+            polls[pollId].votesForMember[member][contextType].add(votes);
+
         // place votes to totalVotesByChoice;
         polls[pollId].totalVotesForContextType[contextType] =
             polls[pollId].totalVotesForContextType[contextType].add(votes);
@@ -549,9 +575,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         context.totalPendingVotes = context.totalPendingVotes.add(votesInWei);
 
         // update global reputation
-        uint startBlock;
-        uint endBlock;
-        (startBlock, endBlock,) = getPoll(pollId);
+        (uint startBlock, uint endBlock, , ) = getPoll(pollId);
 
         Context storage globalContext = reputations[globalReputationsSystemID]
             .repVec[member][contextType];
@@ -736,7 +760,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     * Checks if a poll exits
     *
     * @param pollId the id of the poll to start, generated using
-    *     keccak256(projectNameHash, milestoneNameHash)
+    *     keccak256(abi.encodePacked(projectNameHash, milestoneNameHash))
     */
     function pollExist(bytes32 pollId) public view returns (bool) {
         return carbonVoteXCore.pollExist(namespace, pollId);
@@ -746,7 +770,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     * Checks if a poll has expired
     *
     * @param pollId the id of the poll to start, generated using
-    *     keccak256(projectNameHash, milestoneNameHash)
+    *     keccak256(abi.encodePacked(projectNameHash, milestoneNameHash))
     */
     function pollExpired(bytes32 pollId) public view returns (bool) {
         // Check if poll exists
@@ -802,7 +826,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     * provided in the corresponding poll request
     *
     * @param pollId the id of the poll to validate, generated using
-    *     keccak256(projectNameHash, milestoneNameHash)
+    *     keccak256(abi.encodePacked(projectNameHash, milestoneNameHash))
     */
     function validatePollRequest(bytes32 pollId) private view returns (bool) {
         // note that if pollId does not exist in pollRequests =>
