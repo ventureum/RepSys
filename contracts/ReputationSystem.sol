@@ -421,7 +421,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     * @param tokenAddress the token address used for votes
     * @param contextTypes the context types used for votes
     */
-    function modifyPollRequest(
+    function modifyPollRequest (
         bytes32 pollId,
         uint minStartTime,
         uint maxStartTime,
@@ -432,6 +432,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     )
         public
     {
+        require(msg.sender == addressCanRegister);
         require(
             pollRequests[pollId].minStartTime != 0 &&
             pollRequests[pollId].maxStartTime != 0,
