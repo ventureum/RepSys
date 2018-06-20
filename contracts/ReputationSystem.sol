@@ -465,14 +465,17 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     *   id cannot be the global reputation system's id
     * @param pollId the id of the poll to start, generated using
     *     keccak256(abi.encodePacked(projectNameHash, milestoneNameHash))
+    * @param delayLength the delayed block number for startBlock
+    * @param pollLength Length of poll measured by block number
     */
-    function startPoll(bytes32 id, bytes32 pollId) public onlyNonGlobalReputationsSystemID(id) {
+    function startPoll(bytes32 id, bytes32 pollId, uint delayLength, uint pollLength)
+        public
+        onlyNonGlobalReputationsSystemID(id)
+    {
         require(validatePollRequest(pollId));
 
-        // 20 blocks is roughly 5 min
-        // for testing only
-        uint startBlock = block.number.add(20);
-        uint endBlock = startBlock.add(20);
+        uint startBlock = block.number.add(delayLength);
+        uint endBlock = startBlock.add(pollLength);
         carbonVoteXCore.register(
             namespace,
             startBlock,

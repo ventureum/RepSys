@@ -13,6 +13,8 @@ const CONTEXT_TYPE_TWO = 'two'
 const TOTAL_VOTES_LIMIT = 100
 const CONTEXT_TYPES = [CONTEXT_TYPE_ONE, CONTEXT_TYPE_TWO]
 const NAMESPACE_REPUTATION_SYSTEM = 'ReputationSystem'
+const DELAY_LENGTH = 20
+const POLL_LENGTH = 20
 
 contract('ReputationSystem', accounts => {
   const ROOT_ACCOUNT = accounts[0]
@@ -192,11 +194,15 @@ contract('ReputationSystem', accounts => {
     await reputationSystem.startPoll(
       projectId,
       pollIdOne,
+      DELAY_LENGTH,
+      POLL_LENGTH,
       {from: REGISTER_ACCOUNT})
 
     await reputationSystem.startPoll(
       projectId,
       pollIdTwo,
+      DELAY_LENGTH,
+      POLL_LENGTH,
       {from: REGISTER_ACCOUNT})
 
     let project =
@@ -234,6 +240,8 @@ contract('ReputationSystem', accounts => {
       await reputationSystem.startPoll(
         projectId,
         pollId,
+        DELAY_LENGTH,
+        POLL_LENGTH,
         {from: REGISTER_ACCOUNT})
       assert.fail()
     } catch (err) {
@@ -269,6 +277,8 @@ contract('ReputationSystem', accounts => {
     await reputationSystem.startPoll(
       projectId,
       pollId,
+      DELAY_LENGTH,
+      POLL_LENGTH,
       {from: REGISTER_ACCOUNT})
 
     assert.equal(await reputationSystem.pollExist.call(pollId), true)
@@ -448,6 +458,8 @@ contract('ReputationSystem', accounts => {
     await reputationSystem.startPoll(
       projectId,
       pollId,
+      DELAY_LENGTH,
+      POLL_LENGTH,
       {from: REGISTER_ACCOUNT})
 
     // set up upper vote limit for voters
@@ -624,6 +636,8 @@ contract('ReputationSystem', accounts => {
     await reputationSystem.startPoll(
       projectId,
       pollId,
+      DELAY_LENGTH,
+      POLL_LENGTH,
       {from: REGISTER_ACCOUNT})
 
     // set up upper vote limit for voters
