@@ -791,6 +791,33 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     }
 
     /**
+     * Gets the info of the poll request.
+     *
+     * @param pollId UUID (hash value) of a poll
+     */
+    function getPollRequest(bytes32 pollId)
+        external
+        view
+        returns (uint, uint, uint, bool, address, bytes32[])
+    {
+        uint minStartTime = pollRequests[pollId].minStartTime;
+        require(minStartTime != 0);
+        uint maxStartTime = pollRequests[pollId].maxStartTime;
+        uint pseudoPrice = pollRequests[pollId].pseudoPrice;
+        bool priceGteOne = pollRequests[pollId].priceGteOne;
+        address tokenAddress = pollRequests[pollId].tokenAddress;
+        bytes32[] memory contextTypes = pollRequests[pollId].contextTypes;
+        return (
+            minStartTime,
+            maxStartTime,
+            pseudoPrice,
+            priceGteOne,
+            tokenAddress,
+            contextTypes
+        );
+    }
+
+    /**
      * Gets the startBlock, endBlock, pollId and token address of the poll.
      *
      * @param pollId UUID (hash value) of a poll
