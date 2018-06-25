@@ -12,7 +12,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
     using SafeMath for uint;
 
     // events
-    event PollRequestRegistered(
+    event PollRequestRegistered (
         address indexed requester,
         bytes32 pollId,
         uint minStartTime,
@@ -23,7 +23,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         bytes32[] contextTypes
     );
 
-    event PollRequestModified(
+    event PollRequestModified (
         address indexed requester,
         bytes32 pollId,
         uint minStartTime,
@@ -34,9 +34,9 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         bytes32[] contextTypes
     );
 
-    event PollStarted(address indexed requester, bytes32 id, bytes32 pollId);
+    event PollStarted (address indexed requester, bytes32 id, bytes32 pollId);
 
-    event Voted(
+    event Voted (
         address indexed requester,
         bytes32 id,
         address indexed member,
@@ -46,7 +46,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         uint globalNonce
     );
 
-    event RepVecContextUpdated(
+    event RepVecContextUpdated (
         address indexed requester,
         bytes32 id,
         address indexed member,
@@ -55,7 +55,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         uint currentUpdatePollNonceEnd
     );
 
-    event GlobalRepVecContextUpdated(
+    event GlobalRepVecContextUpdated (
         address indexed requester,
         address indexed member,
         bytes32 contextType,
@@ -63,17 +63,36 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         uint currentUpdatePollNonceEnd
     );
 
-    event RepVecContextBatchUpdated(
+    event RepVecContextBatchUpdated (
         address indexed requester,
         bytes32 id,
         address indexed member,
         bytes32[] contextTypes
     );
 
-    event UpdateIntervalReset(uint _updateInterval);
+    event UpdateIntervalReset (uint _updateInterval);
 
-    event VotesDiscountFactorsReset(uint _prevVotesDiscount, uint _newVotesDiscount);
+    event VotesDiscountFactorsReset (uint _prevVotesDiscount, uint _newVotesDiscount);
 
+    event SetRepVec (
+        address indexed requester,
+        bytes32 reputationSystemId, 
+        address indexed memberAddress, 
+        bytes32 contextType, 
+        uint lastUpdated, 
+        uint updatedBlockNumber,
+        uint votes,
+        uint totalPendingVotes
+    );
+
+    event SetPendingVotes (
+        address indexed requester,
+        bytes32 reputationSystemId, 
+        address indexed memberAddress, 
+        bytes32 contextType,
+        bytes32[] pollIdsForPendingVotes,
+        uint[] votesForPendingVotes
+    );
 
     struct Context {
         uint lastUpdated;
@@ -240,6 +259,73 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         }
     }
 
+    function setPendingVotes (
+        bytes32 reputationSystemId, 
+        address memberAddress, 
+        bytes32 contextType, 
+        bytes32[] pollIdsForPendingVotes, 
+        uint[] votesForPendingVotes) 
+        private
+    {
+        require (pollIdsForPendingVotes.length == votesForPendingVotes.length);
+
+        Context storage context = reputations[reputationSystemId].repVec[memberAddress][contextType];
+
+        for (uint i = 0; i < pollIdsForPendingVotes.length; i++) {
+            context.pendingVotes[pollIdsForPendingVotes[i]] = votesForPendingVotes[i];
+        }
+
+        emit SetPendingVotes(
+            msg.sender,
+            reputationSystemId,
+            memberAddress,
+            contextType,
+            pollIdsForPendingVotes,
+            votesForPendingVotes
+        );
+    }
+
+    function setRepVec (
+        bytes32 reputationSystemId, 
+        address memberAddress, 
+        bytes32 contextType, 
+        uint lastUpdated, 
+        uint updatedBlockNumber, 
+        uint votes, 
+        bytes32[] pollIdForPendingVotes,
+        uint[] votesForPendingVotes,
+        uint totalPendingVotes)
+        external
+        onlyOwner
+    {
+        Context memory context = Context({
+            lastUpdated: lastUpdated,
+            updatedBlockNumber: updatedBlockNumber,
+            votes: votes,
+            totalPendingVotes: totalPendingVotes
+        });
+
+        reputations[reputationSystemId].repVec[memberAddress][contextType] = context;
+
+        setPendingVotes(
+            reputationSystemId,
+            memberAddress,
+            contextType,
+            pollIdForPendingVotes,
+            votesForPendingVotes);
+
+        emit SetRepVec(
+            msg.sender,
+            reputationSystemId, 
+            memberAddress, 
+            contextType, 
+            lastUpdated, 
+            updatedBlockNumber,
+            votes,
+            totalPendingVotes
+        );
+    }
+    
     function setAddressCanRegister (address _addressCanRegister) 
         external 
         onlyOwner 

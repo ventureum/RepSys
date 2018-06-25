@@ -1,5 +1,14 @@
 'use strict'
 
+const WWeb3 = require('web3')
+
+const BigNumber = WWeb3.BigNumber
+
+const should = require('chai')
+  .use(require('chai-as-promised'))
+  .use(require('chai-bignumber')(BigNumber))
+  .should()
+
 const ReputationSystem = artifacts.require('./ReputationSystem.sol')
 const CarbonVoteXCore = artifacts.require('carbonvotex/contracts/CarbonVoteXCore.sol')
 const Web3 = require('web3')
@@ -44,6 +53,10 @@ contract('ReputationSystem', accounts => {
       {from: ROOT_ACCOUNT})
     await reputationSystem.setAddressCanRegister(REGISTER_ACCOUNT)
   })
+
+  function toBytes32(str) {
+    return str + "0".repeat(66 - str.length)
+  }
 
   it('should contain the same carbonVoteXCore ' +
       'instance as the deployed carbonVoteXCore', async () => {
@@ -703,6 +716,57 @@ contract('ReputationSystem', accounts => {
       assert.fail()
     } catch (err) {
       assert.ok(/revert/.test(err.message))
+    }
+  })
+
+  it('should set RepVec success', async () => {
+    let mockId = '0xabc'
+    let mockAddress = VOTER_ACCOUNT_ONE
+    let mockContextType = "0x123abc"
+    let mockLastUpdated = 101
+    let mockUpdatedBlockNumber = 10101
+    let mockVotes = 11101
+    let mockPollIdsForPendingVotes = ["0x1f001a", "0x1f0019"]
+    let mockVotesForPendingVotes = [11, 12]
+    let mockTotalPendingVotes = 1001101
+
+    let { logs } = await reputationSystem.setRepVec(
+      mockId,
+      mockAddress,
+      mockContextType,
+      mockLastUpdated,
+      mockUpdatedBlockNumber,
+      mockVotes,
+      mockPollIdsForPendingVotes,
+      mockVotesForPendingVotes,
+      mockTotalPendingVotes).should.be.fulfilled
+
+    const event = logs.find(e => e.event === 'SetRepVec')
+    should.exist(event)
+
+    event.args.requester.should.be.equal(ROOT_ACCOUNT)
+    event.args.reputationSystemId.should.be.equal(toBytes32(mockId))
+    event.args.memberAddress.should.be.equal(mockAddress)
+    event.args.contextType.should.be.equal(toBytes32(mockContextType))
+    event.args.lastUpdated.should.be.bignumber.equal(mockLastUpdated)
+    event.args.updatedBlockNumber
+      .should.be.bignumber.equal(mockUpdatedBlockNumber)
+    event.args.votes.should.be.bignumber.equal(mockVotes)
+    event.args.totalPendingVotes
+      .should.be.bignumber.equal(mockTotalPendingVotes)
+
+
+    const event2 = logs.find(e => e.event === 'SetPendingVotes')
+    should.exist(event2)
+
+    const pollIds = event2.args.pollIdsForPendingVotes
+    for (var i = 0; i < pollIds.length; i++) {
+      pollIds[i].should.be.equal(toBytes32(mockPollIdsForPendingVotes[i]))
+    }
+
+    const votes = event2.args.votesForPendingVotes
+    for (var i = 0; i < votes.length; i++) {
+      votes[i].toString().should.be.bignumber.equal(mockVotesForPendingVotes[i])
     }
   })
 })

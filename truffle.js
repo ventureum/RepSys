@@ -15,6 +15,18 @@ module.exports = {
       network_id: '*', // Match any network id
       gas: 5000000,
       provider: new HDWalletProvider(mnemonic, "http://localhost:8545",0, 9)
+    },
+    testing: {
+      host: 'localhost',
+      port: 8545,
+      network_id: "*",
+      gas: 6000000
+    }
+  },
+  solc: {
+    optimizer: {
+      enabled: true,
+      runs: 200
     }
   }
 }
