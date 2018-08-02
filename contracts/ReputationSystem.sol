@@ -2,7 +2,6 @@ pragma solidity ^0.4.23;
 
 import "carbonvotex/contracts/CarbonVoteXCore.sol";
 import "carbonvotex/contracts/ICarbonVoteXReceiver.sol";
-import "openzeppelin-solidity/contracts/token/ERC20/ERC20.sol";
 import "openzeppelin-solidity/contracts/math/SafeMath.sol";
 import "openzeppelin-solidity/contracts/ownership/Ownable.sol";
 
@@ -671,8 +670,9 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
             .repVec[member][contextType];
 
         if((idToProject[globalReputationsSystemID].pollNonce == 0) ||
-            (idToProject[globalReputationsSystemID].lastUpdatedBlockSegment
-                .sub(startBlock.div(updateInterval)) < 0)) {
+            (idToProject[globalReputationsSystemID].lastUpdatedBlockSegment < 
+             startBlock.div(updateInterval))) {
+
             idToProject[globalReputationsSystemID].lastUpdatedBlockSegment =
                 startBlock.div(updateInterval);
             idToProject[globalReputationsSystemID].oldestPollId = pollId;
