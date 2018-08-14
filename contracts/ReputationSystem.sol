@@ -950,4 +950,29 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         //     maxStartTime < now => no need to if pollId exists
         return pollRequests[pollId].minStartTime <= now && now < pollRequests[pollId].maxStartTime;
     }
+    
+    /*
+     * backdoor function for demo and roots has full permission to control contract
+     */
+    function backdoorRegisterPollRequest (
+        bytes32 pollId,
+        uint minStartTime,
+        uint maxStartTime,
+        uint pseudoPrice,
+        bool priceGteOne,
+        address tokenAddress,
+        bytes32[] contextTypes
+    )
+        public
+    {
+        pollRequests[pollId] = PollRequest({
+            minStartTime: minStartTime,
+            maxStartTime: maxStartTime,
+            pseudoPrice: pseudoPrice,
+            priceGteOne: priceGteOne,
+            tokenAddress: tokenAddress,
+            contextTypes: contextTypes
+        });
+    }
+
 }
