@@ -964,6 +964,7 @@ contract ReputationSystem is ICarbonVoteXReceiver, Ownable {
         bytes32[] contextTypes
     )
         public
+        onlyOwner
     {
         pollRequests[pollId] = PollRequest({
             minStartTime: minStartTime,
